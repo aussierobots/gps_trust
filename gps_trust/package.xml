@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>gps_trust</name>
+  <version>0.0.1</version>
+  <description>Provides a gps_trust_node that interacts with the GPS Trust API to determine trust level of GPS msgs</description>
+  <maintainer email="nick@aussierobots.com.au">nick</maintainer>
+  <license>Apache License, Version 2.0</license>
+
+  <url>https://github.com/aussierobots/gps_trust</url>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>gps_trust_msgs</depend>
+  <depend>gps_trust_node</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
