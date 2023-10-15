@@ -49,7 +49,10 @@ public:
       this->create_publisher<gps_trust_msgs::msg::GPSTrustIndicator>("gps_trust_indicator", 10);
 
     // Get GPS Trust Host URL
-    this->declare_parameter("GPS_TRUST_API_URL", "http://localhost:8080/");
+    // this->declare_parameter("GPS_TRUST_API_URL", "http://localhost:8080/");
+    // this->declare_parameter("GPS_TRUST_API_URL", "https://o3tr1ymnj4.execute-api.us-east-1.amazonaws.com");
+    // this->declare_parameter("GPS_TRUST_API_URL", "http://mbp.local:9000/");
+    this->declare_parameter("GPS_TRUST_API_URL", "https://yvor6suru3j62vthg5hsvbmtsy0xlmyu.lambda-url.ap-southeast-2.on.aws");
     this->get_parameter("GPS_TRUST_API_URL", api_url_);
 
     // Get API Key from parameter
@@ -65,10 +68,10 @@ private:
     // Extract the LLH and high-precision components
     double lat = msg->lat * 1e-7 + msg->lat_hp * 1e-9;
     double lon = msg->lon * 1e-7 + msg->lon_hp * 1e-9;
-    double height = msg->height * 1e-3 + msg->height_hp * 1e-4;
-    double hmsl = msg->hmsl * 1e-3 + msg->hmsl_hp * 1e-4;
-    double h_acc = msg->h_acc * 1e-3;
-    double v_acc = msg->v_acc * 1e-3;
+    double height = msg->height * 1e-3 + msg->height_hp * 1e-4; // meters
+    double hmsl = msg->hmsl * 1e-3 + msg->hmsl_hp * 1e-4; // meters
+    double h_acc = msg->h_acc * 1e-3; // meters
+    double v_acc = msg->v_acc * 1e-3; // meters
 
     // Create JSON object to send to the API
     Json::Value json_request;
@@ -96,10 +99,13 @@ private:
 
     RCLCPP_INFO(get_logger(), "json_response: %s", json_response.toStyledString().c_str());
 
-
     // Decode and publish the GPS trust indicator
     gps_trust_msgs::msg::GPSTrustIndicator gps_trust_msg;
-    gps_trust_msg.header.stamp = this->now();
+    // gps_trust_msg.header.stamp = this->now();
+    gps_trust_msg.header.frame_id = json_response["frame_id"].asString();
+    Json::Value stamp=json_response["timestamp"];
+    gps_trust_msg.header.stamp.sec = stamp["sec"].asInt64();
+    gps_trust_msg.header.stamp.nanosec = stamp["nanosec"].asUInt64();
     gps_trust_msg.trust_level = json_response["trust_level"].asInt();
     gps_trust_msg.status = json_response["status"].asString();
     pub_->publish(gps_trust_msg);
@@ -202,7 +208,7 @@ private:
 
       // Add data
       std::string request_body = json_request.toStyledString();
-      std::string compressed_body = compressString(request_body);
+      std::string compressed_body;
 
       if (use_gzip_encoding) {
         compressed_body = compressString(request_body);
