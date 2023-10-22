@@ -1,0 +1,48 @@
+/ubx_nav_hp_pos_llh:
+  reliability: reliable
+  history: keep_all
+  liveliness: automatic
+/ubx_nav_hp_pos_ecef:
+  reliability: reliable
+  history: keep_all
+  liveliness: automatic
+/ubx_nav_cov:
+  reliability: reliable
+  history: keep_all
+  liveliness: automatic
+/ubx_nav_status:
+  reliability: reliable
+  history: keep_all
+  liveliness: automatic
+/ubx_nav_orb:
+  reliability: reliable
+  history: keep_all
+  liveliness: automatic
+/ubx_nav_sat:
+  reliability: reliable
+  history: keep_all
+  liveliness: automatic
+/ubx_nav_sig:
+  reliability: reliable
+  history: keep_all
+  liveliness: automatic
+/ubx_sec_sig:
+  reliability: reliable
+  history: keep_all
+  liveliness: automatic
+/ubx_sec_sig_log:
+  reliability: reliable
+  history: keep_all
+  liveliness: automatic
+/ubx_rxm_measx:
+  reliability: reliable
+  history: keep_all
+  liveliness: automatic
+/ubx_rxm_rawx:
+  reliability: reliable
+  history: keep_all
+  liveliness: automatic
+/ubx_rxm_rtcm:
+  reliability: reliable
+  history: keep_all
+  liveliness: automatic
