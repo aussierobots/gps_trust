@@ -64,19 +64,20 @@ public:
       this->create_publisher<gps_trust_msgs::msg::GPSTrustIndicator>("gps_trust_indicator", 10);
 
     // Get GPS Trust Host URL
-    // this->declare_parameter("GPS_TRUST_API_URL", "http://localhost:8080/");
-    // this->declare_parameter("GPS_TRUST_API_URL", "https://o3tr1ymnj4.execute-api.us-east-1.amazonaws.com");
-    // this->declare_parameter("GPS_TRUST_API_URL", "http://mbp.local:9000/");
     this->declare_parameter(
       "GPS_TRUST_API_URL",
-      // "https://yvor6suru3j62vthg5hsvbmtsy0xlmyu.lambda-url.ap-southeast-2.on.aws");
-      // "https://localhost:8080/");
-      "http://mbp.local:9000");
+      // "http://mbp.local:9000/lambda-url/gps-trust-api"
+      "https://gtapi.aussierobots.com.au/gps-trust-api"
+      );
     this->get_parameter("GPS_TRUST_API_URL", api_url_);
 
+    RCLCPP_INFO(this->get_logger(), "api_url: '%s'", api_url_.c_str());
+
     // Get API Key from parameter
-    this->declare_parameter("GPS_TRUST_API_KEY", "demo_api_key");
-    this->get_parameter("GPS_TRUST_API_KEY", api_key_);
+    this->declare_parameter("GPS_TRUST_DEVICE_API_KEY", "demo_api_key");
+    this->get_parameter("GPS_TRUST_DEVICE_API_KEY", api_key_);
+
+    RCLCPP_INFO(get_logger(), "api_key: '%s'", api_key_.c_str());
   }
 
 private:
@@ -111,25 +112,24 @@ private:
   GPS_TRUST_NODE_LOCAL
   void ubx_nav_llh_callback(const ublox_ubx_msgs::msg::UBXNavHPPosLLH::SharedPtr msg)
   {
-
     // Create JSON object to send to the API
     Json::Value json_request;
 
     json_request["llh"] = json_from_ubx_nav_llh(msg);
 
-    RCLCPP_INFO(get_logger(), "sec_sig_json_.use_count(): %ld", sec_sig_json_.use_count());
+    RCLCPP_DEBUG(get_logger(), "sec_sig_json_.use_count(): %ld", sec_sig_json_.use_count());
     if (sec_sig_json_.use_count() != 0) {
       json_request["sec_sig"] = *sec_sig_json_.get();
       sec_sig_json_.reset();
     }
 
-    RCLCPP_INFO(get_logger(), "nav_orb_json_.use_count(): %ld", nav_orb_json_.use_count());
+    RCLCPP_DEBUG(get_logger(), "nav_orb_json_.use_count(): %ld", nav_orb_json_.use_count());
     if (nav_orb_json_.use_count() != 0) {
       json_request["nav_orb"] = *nav_orb_json_.get();
       nav_orb_json_.reset();
     }
 
-    RCLCPP_INFO(get_logger(), "nav_sat_json_.use_count(): %ld", nav_sat_json_.use_count());
+    RCLCPP_DEBUG(get_logger(), "nav_sat_json_.use_count(): %ld", nav_sat_json_.use_count());
     if (nav_sat_json_.use_count() != 0) {
       json_request["nav_sat"] = *nav_sat_json_.get();
       nav_sat_json_.reset();
@@ -137,26 +137,48 @@ private:
 
     Json::StreamWriterBuilder builder;
     builder.settings_["indentation"] = "";
-    RCLCPP_INFO(get_logger(), "json_request: %s", Json::writeString(builder,json_request).c_str());
+    RCLCPP_DEBUG(
+      get_logger(), "json_request: %s",
+      Json::writeString(builder, json_request).c_str());
 
 
     // Call API and get the response
     Json::Value data;
-    data["data"]=json_request;
+    data["data"] = json_request;
+    RCLCPP_INFO(
+      get_logger(), "json data: %s",
+      Json::writeString(builder, data).c_str());
     Json::Value json_response = callAPI(data, false);
 
-    RCLCPP_INFO(get_logger(), "json_response: %s", Json::writeString(builder, json_response).c_str());
+    if (json_response.empty()) {
+      RCLCPP_ERROR(
+        get_logger(), "error calling GPS Trust API: %s",
+        api_url_.c_str());
 
-    // Decode and publish the GPS trust indicator
-    gps_trust_msgs::msg::GPSTrustIndicator gps_trust_msg;
-    // gps_trust_msg.header.stamp = this->now();
-    gps_trust_msg.header.frame_id = json_response["frame_id"].asString();
-    Json::Value stamp = json_response["timestamp"];
-    gps_trust_msg.header.stamp.sec = stamp["sec"].asInt64();
-    gps_trust_msg.header.stamp.nanosec = stamp["nanosec"].asUInt64();
-    gps_trust_msg.trust_level = json_response["trust_level"].asInt();
-    gps_trust_msg.status = json_response["status"].asString();
-    pub_->publish(gps_trust_msg);
+      // Decode and publish the GPS trust indicator
+      gps_trust_msgs::msg::GPSTrustIndicator gps_trust_msg;
+      gps_trust_msg.header.frame_id = this->get_name();
+      gps_trust_msg.header.stamp = this->now();
+      gps_trust_msg.trust_level = 0;
+      gps_trust_msg.status = "ERROR with GPS Trust API connection";
+      pub_->publish(gps_trust_msg);
+
+    } else {
+      RCLCPP_INFO(
+        get_logger(), "json_response: %s",
+        Json::writeString(builder, json_response).c_str());
+
+      // Decode and publish the GPS trust indicator
+      gps_trust_msgs::msg::GPSTrustIndicator gps_trust_msg;
+      // gps_trust_msg.header.stamp = this->now();
+      gps_trust_msg.header.frame_id = json_response["frameId"].asString();
+      Json::Value stamp = json_response["timestamp"];
+      gps_trust_msg.header.stamp.sec = stamp["sec"].asInt64();
+      gps_trust_msg.header.stamp.nanosec = stamp["nanosec"].asUInt64();
+      gps_trust_msg.trust_level = json_response["trustLevel"].asInt();
+      gps_trust_msg.status = json_response["status"].asString();
+      pub_->publish(gps_trust_msg);
+    }
   }
 
   GPS_TRUST_NODE_LOCAL
@@ -170,10 +192,10 @@ private:
     ss["timestamp"] = json_stamp;
     ss["frame_id"] = msg->header.frame_id;
 
-    ss["jam_det_enabled"] = msg->jam_det_enabled;
+    ss["jam_det_enabled"] = static_cast<bool>(msg->jam_det_enabled);
     ss["jamming_state"] = msg->jamming_state;
 
-    ss["spf_det_enabled"] = msg->spf_det_enabled;
+    ss["spf_det_enabled"] = static_cast<bool>(msg->spf_det_enabled);
     ss["spoofing_state"] = msg->spoofing_state;
 
     return ss;
@@ -184,8 +206,7 @@ private:
   {
     sec_sig_json_ = std::make_shared<Json::Value>(json_from_ubx_sec_sec(msg));
 
-    RCLCPP_WARN(get_logger(), "sec_sig_json: %s", sec_sig_json_->toStyledString().c_str());
-
+    RCLCPP_DEBUG(get_logger(), "sec_sig_json: %s", sec_sig_json_->toStyledString().c_str());
   }
 
   GPS_TRUST_NODE_LOCAL
@@ -286,8 +307,7 @@ private:
 
     oss << "}" << endl;
 
-    RCLCPP_WARN(get_logger(), "nav_orb_json: %s", oss.str().c_str());
-
+    RCLCPP_DEBUG(get_logger(), "nav_orb_json: %s", oss.str().c_str());
   }
 
   GPS_TRUST_NODE_LOCAL
@@ -336,7 +356,7 @@ private:
       cnos.append(sv.cno);
       elevs.append(sv.elev);
       azims.append(sv.azim);
-      pr_ress.append(sv.pr_res*0.1);
+      pr_ress.append(sv.pr_res * 0.1);
       quality_inds.append(sv.flags.quality_ind);
       sv_useds.append(sv.flags.sv_used);
       healths.append(sv.flags.health);
@@ -429,8 +449,7 @@ private:
 
     oss << "}" << endl;
 
-    RCLCPP_WARN(get_logger(), "nav_sat_json: %s", oss.str().c_str());
-
+    RCLCPP_DEBUG(get_logger(), "nav_sat_json: %s", oss.str().c_str());
   }
 
   GPS_TRUST_NODE_LOCAL
@@ -521,9 +540,15 @@ private:
         headers = curl_slist_append(headers, "Content-Encoding: gzip");
       }
 
-      std::string api_key_header = "X-Api-Key" + api_key_;
+      // Prepare the API key header
+      std::string api_key_header = "x-api-key:" + api_key_;
+
+      // Set the custom headers
       headers = curl_slist_append(headers, api_key_header.c_str());
       curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+      // Set the User-Agent
+      curl_easy_setopt(curl, CURLOPT_USERAGENT, "GPSTrustROS2Agent/1.0");
 
       // Set the POST option
       curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -552,25 +577,32 @@ private:
       res = curl_easy_perform(curl);
 
       if (res != CURLE_OK) {
-        fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        RCLCPP_ERROR(get_logger(), "curl_easy_perform() failed: %s", curl_easy_strerror(res));
       }
 
       curl_easy_cleanup(curl);
 
-      RCLCPP_INFO(get_logger(), "curl readBuffer: %s", readBuffer.c_str());
+      if (readBuffer.empty()) {
+        RCLCPP_WARN(get_logger(), "curl readBuffer: '%s'", readBuffer.c_str());
+      } else {
+        RCLCPP_DEBUG(get_logger(), "curl readBuffer: '%s'", readBuffer.c_str());
+      }
     }
+
 
     Json::Value json_response;
 
-    // Check the is_gzip flag to see if the content was gzip-encoded
-    if (is_gzip) {
-      // Decompress gzip-encoded content
-      std::string decompressed_content = decompressGzip(readBuffer);
-      std::istringstream response_stream(decompressed_content);
-      response_stream >> json_response;
-    } else {
-      std::istringstream response_stream(readBuffer);
-      response_stream >> json_response;
+    if (!readBuffer.empty()) {
+      // Check the is_gzip flag to see if the content was gzip-encoded
+      if (is_gzip) {
+        // Decompress gzip-encoded content
+        std::string decompressed_content = decompressGzip(readBuffer);
+        std::istringstream response_stream(decompressed_content);
+        response_stream >> json_response;
+      } else {
+        std::istringstream response_stream(readBuffer);
+        response_stream >> json_response;
+      }
     }
 
     return json_response;
