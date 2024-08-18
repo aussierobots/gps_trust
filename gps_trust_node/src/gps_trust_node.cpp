@@ -42,26 +42,28 @@ public:
   : Node("gps_trust_node", options)
   {
     RCLCPP_INFO(this->get_logger(), "starting %s", get_name());
+
+    auto qos = rclcpp::SensorDataQoS();
     // Subscriber
     nav_llh_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXNavHPPosLLH>(
-      "/ubx_nav_hp_pos_llh", 10,
+      "/ubx_nav_hp_pos_llh", qos,
       std::bind(&GPSTrustNode::ubx_nav_llh_callback, this, std::placeholders::_1));
 
     sec_sig_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXSecSig>(
-      "/ubx_sec_sig", 10,
+      "/ubx_sec_sig", qos,
       std::bind(&GPSTrustNode::ubx_sec_sig_callback, this, std::placeholders::_1));
 
     nav_orb_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXNavOrb>(
-      "/ubx_nav_orb", 10,
+      "/ubx_nav_orb", qos,
       std::bind(&GPSTrustNode::ubx_nav_orb_callback, this, std::placeholders::_1));
 
     nav_sat_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXNavSat>(
-      "/ubx_nav_sat", 10,
+      "/ubx_nav_sat", qos,
       std::bind(&GPSTrustNode::ubx_nav_sat_callback, this, std::placeholders::_1));
 
     // Publisher
     pub_ =
-      this->create_publisher<gps_trust_msgs::msg::GPSTrustIndicator>("gps_trust_indicator", 10);
+      this->create_publisher<gps_trust_msgs::msg::GPSTrustIndicator>("gps_trust_indicator", qos);
 
     // Get GPS Trust Host URL
     this->declare_parameter(
