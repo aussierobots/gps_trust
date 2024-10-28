@@ -16,9 +16,13 @@ def generate_launch_description():
   gps_trust_device_api_key_arg = DeclareLaunchArgument(
     "GPS_TRUST_DEVICE_API_KEY", default_value=EnvironmentVariable(name="GPS_TRUST_DEVICE_API_KEY", default_value="no_api_key")
   )
+  log_level_arg = DeclareLaunchArgument(
+    "log_level", default_value=TextSubstitution(text="INFO")
+  )
   params = [{
     'GPS_TRUST_API_URL': LaunchConfiguration('GPS_TRUST_API_URL'),
     'GPS_TRUST_DEVICE_API_KEY': LaunchConfiguration('GPS_TRUST_DEVICE_API_KEY'),
+    'log_level': LaunchConfiguration('log_level'),
   }]
 
   container1 = ComposableNodeContainer(
@@ -26,6 +30,7 @@ def generate_launch_description():
     namespace='',
     package='rclcpp_components',
     executable='component_container',
+    arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],
     composable_node_descriptions=[
       ComposableNode(
         package='gps_trust_node',
@@ -39,5 +44,6 @@ def generate_launch_description():
   return launch.LaunchDescription([
     gps_trust_api_url_arg,
     gps_trust_device_api_key_arg,
+    log_level_arg,
     container1
   ])

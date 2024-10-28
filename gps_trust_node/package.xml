@@ -18,8 +18,8 @@
   <depend>rtcm_msgs</depend>
   <depend>gps_trust_msgs</depend>
   <build_depend>pkg-config</build_depend>
-  <build_depend>jsoncpp</build_depend>
-  <exec_depend>jsoncpp</exec_depend>
+  <build_depend>libjsoncpp</build_depend>
+  <exec_depend>libjsoncpp</exec_depend>
   <depend>libcurl_vendor</depend>
   <depend>zlib</depend>
 

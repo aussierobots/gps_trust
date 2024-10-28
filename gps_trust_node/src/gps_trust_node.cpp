@@ -1,4 +1,4 @@
-// Copyright 2023 Australian Robotics Supplies & Technology
+// Copyright 2024 Australian Robotics Supplies & Technology
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,7 +19,12 @@
 #include <zlib.h>
 #include <vector>
 #include <string>
+#include <chrono>
+#include <memory>
+#include <mutex>
 
+#include "rcl_interfaces/msg/parameter_event.hpp"
+#include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
 #include "std_msgs/msg/header.hpp"
@@ -29,7 +34,16 @@
 #include "ublox_ubx_msgs/msg/ubx_sec_sig.hpp"
 #include "rtcm_msgs/msg/message.hpp"
 #include "gps_trust_node/visibility_control.h"
+#include "gps_trust_node/node_params.hpp"
 #include "gps_trust_msgs/msg/gps_trust_indicator.hpp"
+
+using namespace std::chrono_literals;
+using SetParametersResult =
+  std::shared_future<std::vector<rcl_interfaces::msg::SetParametersResult>>;
+
+using std::placeholders::_1;
+using std::placeholders::_2;
+using std::placeholders::_3;
 
 namespace gps_trust
 {
@@ -44,45 +58,457 @@ public:
     RCLCPP_INFO(this->get_logger(), "starting %s", get_name());
 
     auto qos = rclcpp::SensorDataQoS();
+
+    rclcpp::PublisherOptions pub_options;
+    pub_options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
+
+    rclcpp::SubscriptionOptions sub_options;
+    sub_options.qos_overriding_options = rclcpp::QosOverridingOptions::with_default_policies();
     // Subscriber
     nav_llh_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXNavHPPosLLH>(
       "/ubx_nav_hp_pos_llh", qos,
-      std::bind(&GPSTrustNode::ubx_nav_llh_callback, this, std::placeholders::_1));
+      std::bind(&GPSTrustNode::ubx_nav_llh_callback, this, std::placeholders::_1),
+      sub_options);
 
     sec_sig_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXSecSig>(
       "/ubx_sec_sig", qos,
-      std::bind(&GPSTrustNode::ubx_sec_sig_callback, this, std::placeholders::_1));
+      std::bind(&GPSTrustNode::ubx_sec_sig_callback, this, std::placeholders::_1),
+      sub_options);
 
     nav_orb_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXNavOrb>(
       "/ubx_nav_orb", qos,
-      std::bind(&GPSTrustNode::ubx_nav_orb_callback, this, std::placeholders::_1));
+      std::bind(&GPSTrustNode::ubx_nav_orb_callback, this, std::placeholders::_1),
+      sub_options);
 
     nav_sat_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXNavSat>(
       "/ubx_nav_sat", qos,
-      std::bind(&GPSTrustNode::ubx_nav_sat_callback, this, std::placeholders::_1));
+      std::bind(&GPSTrustNode::ubx_nav_sat_callback, this, std::placeholders::_1),
+      sub_options);
 
     // Publisher
     pub_ =
-      this->create_publisher<gps_trust_msgs::msg::GPSTrustIndicator>("gps_trust_indicator", qos);
+      this->create_publisher<gps_trust_msgs::msg::GPSTrustIndicator>(
+      "gps_trust_indicator", qos, pub_options);
+
+    auto parameters_client = std::make_shared<rclcpp::SyncParametersClient>(this);
+    while (!parameters_client->wait_for_service(1s)) {
+      if (!rclcpp::ok()) {
+        RCLCPP_ERROR(
+          get_logger(), "Interrupted while waiting for parameter client service. Exiting.");
+        rclcpp::shutdown();
+      }
+      RCLCPP_WARN(get_logger(), "parameter client service not available, waiting again...");
+    }
 
     // Get GPS Trust Host URL
-    this->declare_parameter(
+    declare_parameter(
       "GPS_TRUST_API_URL",
-      // "http://mbp.local:9000/lambda-url/gps-trust-api"
-      "https://gtapi.aussierobots.com.au/gps-trust-api"
-      );
-    this->get_parameter("GPS_TRUST_API_URL", api_url_);
+      "http://mbp.local:9000/lambda-url/gps-trust-api"
+      // "https://gtapi.aussierobots.com.au/gps-trust-api"
+    );
+
+    get_parameter("GPS_TRUST_API_URL", api_url_);
 
     RCLCPP_INFO(this->get_logger(), "api_url: '%s'", api_url_.c_str());
 
     // Get API Key from parameter
-    this->declare_parameter("GPS_TRUST_DEVICE_API_KEY", "demo_api_key");
-    this->get_parameter("GPS_TRUST_DEVICE_API_KEY", api_key_);
+    declare_parameter("GPS_TRUST_DEVICE_API_KEY", "demo_api_key");
+    get_parameter("GPS_TRUST_DEVICE_API_KEY", api_key_);
+
+    declare_parameter("NTRIP_CLIENT_NODE", "/ntrip_client");
+    get_parameter("NTRIP_CLIENT_NODE", ntrip_client_node_);
+
+    declare_parameter("UBLOX_DGNSS_NODE", "/ublox_dgnss");
+    get_parameter("UBLOX_DGNSS_NODE", ublox_dgnss_node_);
+
+    declare_parameter("maxage_conn", 30);
+    maxage_conn_ = get_parameter("maxage_conn").as_int();
+
+    declare_parameter("log_level", "INFO");
+    log_level_ = get_parameter("log_level").as_string();
+
+    ntrip_parameters_client_ = std::make_shared<rclcpp::AsyncParametersClient>(
+      this,
+      ntrip_client_node_);
+    ublox_parameters_client_ = std::make_shared<rclcpp::AsyncParametersClient>(
+      this,
+      ublox_dgnss_node_);
+
+    ntrip_parameter_event_sub_ = ntrip_parameters_client_->on_parameter_event(
+      std::bind(
+        &GPSTrustNode::on_parameter_event_callback,
+        this, _1));
+
+    ublox_parameter_event_sub_ = ublox_parameters_client_->on_parameter_event(
+      std::bind(
+        &GPSTrustNode::on_parameter_event_callback,
+        this, _1));
+
+    while (!ntrip_parameters_client_->wait_for_service(1s) &&
+      !ublox_parameters_client_->wait_for_service(1s))
+    {
+      if (!rclcpp::ok()) {
+        RCLCPP_ERROR(this->get_logger(), "interrupted while waiting for the service. exiting.");
+        rclcpp::shutdown();
+        return;
+      }
+      RCLCPP_WARN(this->get_logger(), "paramter client service not available, waiting again...");
+    }
+
+    initialise_ntrip_parameters();
+    initialise_ublox_parameters();
 
     RCLCPP_INFO(get_logger(), "api_key: '%s'", api_key_.c_str());
+
+    RCLCPP_INFO(get_logger(), "params_cache_map: %s", get_params_cache_output().c_str());
   }
 
 private:
+  rclcpp::AsyncParametersClient::SharedPtr ntrip_parameters_client_;
+  rclcpp::AsyncParametersClient::SharedPtr ublox_parameters_client_;
+  rclcpp::Subscription<rcl_interfaces::msg::ParameterEvent>::SharedPtr ntrip_parameter_event_sub_;
+  rclcpp::Subscription<rcl_interfaces::msg::ParameterEvent>::SharedPtr ublox_parameter_event_sub_;
+
+  std::map<param_key_t, param_state_t> params_cache_map_;
+  std::mutex params_cache_mutex_;  // Mutex to protect access to the map
+
+  std::string ntrip_client_node_;
+  std::string ublox_dgnss_node_;
+
+  std::string log_level_;
+  long maxage_conn_;
+
+  GPS_TRUST_NODE_LOCAL
+  void initialise_ntrip_parameters()
+  {
+    // list existing parameters
+    auto ntrip_parameter_list_future = ntrip_parameters_client_->list_parameters(
+      {"host", "port", "mountpoint"},
+      2);
+
+    // Wait for the future to be ready
+    if (rclcpp::spin_until_future_complete(
+        this->get_node_base_interface(),
+        ntrip_parameter_list_future) !=
+      rclcpp::FutureReturnCode::SUCCESS)
+    {
+      RCLCPP_ERROR(this->get_logger(), "Failed to get ntrip parameter list");
+      return;
+    }
+    auto ntrip_parameter_list = ntrip_parameter_list_future.get();
+
+
+    auto parameters_future = ntrip_parameters_client_->get_parameters(ntrip_parameter_list.names);
+    // Wait for the future to be ready
+    if (rclcpp::spin_until_future_complete(
+        this->get_node_base_interface(),
+        parameters_future) !=
+      rclcpp::FutureReturnCode::SUCCESS)
+    {
+      RCLCPP_ERROR(this->get_logger(), "Failed to get ntrip parameters");
+      return;
+    }
+    auto parameters = parameters_future.get();
+
+    {
+      // Lock the mutex to ensure thread safety
+      std::lock_guard<std::mutex> lock(params_cache_mutex_);
+      std::stringstream ss;
+
+      ss << "\nNTRIP Parameter names:";
+      for (auto & p :parameters) {
+        auto name = p.get_name();
+        auto value = p.get_parameter_value();
+        auto type = p.get_type();
+
+        ss << "\n " << name;
+
+        auto key = param_key_t {name, NPT_NTRIP_CLIENT};
+        params_cache_map_[key] = {value, type, PARAM_INITIAL, NOTI_NOT_ACTIONED};
+
+      }
+
+      RCLCPP_DEBUG(this->get_logger(), "%s", ss.str().c_str());
+    }
+  }
+
+  GPS_TRUST_NODE_LOCAL
+  void initialise_ublox_parameters()
+  {
+    auto ublox_parameter_list_future = ublox_parameters_client_->list_parameters(
+      {},
+      2);
+
+    // Wait for the future to be ready
+    if (rclcpp::spin_until_future_complete(
+        this->get_node_base_interface(),
+        ublox_parameter_list_future) !=
+      rclcpp::FutureReturnCode::SUCCESS)
+    {
+      RCLCPP_ERROR(this->get_logger(), "Failed to get  ublox parameter list");
+      return;
+    }
+    auto ublox_parameter_list = ublox_parameter_list_future.get();
+
+    // List of parameter names to exclude
+    std::set<std::string> excluded_names = {"start_type_description_service", "use_sim_time"};
+
+    // Filter out excluded parameter names
+    std::vector<std::string> filtered_parameter_names;
+    for (const auto &name : ublox_parameter_list.names) {
+        if (excluded_names.find(name) == excluded_names.end()) {
+            filtered_parameter_names.push_back(name);
+        }
+    }
+
+    auto parameters_future = ublox_parameters_client_->get_parameters(filtered_parameter_names);
+    // Wait for the future to be ready
+    if (rclcpp::spin_until_future_complete(
+        this->get_node_base_interface(),
+        parameters_future) !=
+      rclcpp::FutureReturnCode::SUCCESS)
+    {
+      RCLCPP_ERROR(this->get_logger(), "Failed to get ublox parameters");
+      return;
+    }
+
+    auto parameters = parameters_future.get();
+    {
+      // Lock the mutex to ensure thread safety
+      std::lock_guard<std::mutex> lock(params_cache_mutex_);
+
+      std::stringstream ss;
+      ss << "\nUBLOX Parameter names:";
+      for (auto & p : parameters) {
+        auto name = p.get_name();
+        auto value = p.get_parameter_value();
+        auto type = p.get_type();
+
+        ss << "\n " << name;
+
+        auto key = param_key_t {name, NPT_UBX_CFG};
+        params_cache_map_[key] = {value, type, PARAM_INITIAL, NOTI_NOT_ACTIONED};
+      }
+
+      RCLCPP_DEBUG(this->get_logger(), "%s", ss.str().c_str());
+    }
+  }
+
+  GPS_TRUST_NODE_LOCAL
+  std::string get_params_cache_output()
+  {
+    std::stringstream ss;
+    ss << std::endl;
+
+    // Iterate over the map and extract key-value pairs
+    for (const auto & entry : params_cache_map_) {
+      const param_key_t & key = entry.first;
+      const param_state_t & state = entry.second;
+
+      // Output key (name and type)
+      ss << "Name: " << key.name << ", Type: ";
+      switch (key.node_type) {
+        case NPT_NTRIP_CLIENT:
+          ss << "NTRIP Client";
+          break;
+        case NPT_UBX_CFG:
+          ss << "UBX Config";
+          break;
+      }
+
+      // Output parameter value (as string) using rclcpp::ParameterValue's get types
+      ss << ", Value: ";
+      if (state.value.get_type() == rclcpp::ParameterType::PARAMETER_BOOL) {
+        ss << state.value.get<bool>();
+      } else if (state.value.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER) {
+        ss << state.value.get<int64_t>();
+      } else if (state.value.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) {
+        ss << state.value.get<double>();
+      } else if (state.value.get_type() == rclcpp::ParameterType::PARAMETER_STRING) {
+        ss << state.value.get<std::string>();
+      } else {
+        ss << "Unknown type";
+      }
+
+      // Output ParamStatus
+      ss << ", Status: ";
+      switch (state.status) {
+        case PARAM_INITIAL:
+          ss << "Initial";
+          break;
+        case PARAM_CHANGED:
+          ss << "Changed";
+          break;
+        case PARAM_DELETED:
+          ss << "Deleted";
+          break;
+      }
+
+      // Output ParamNotify
+      ss << ", Notify: ";
+      switch (state.noti) {
+        case NOTI_NOT_ACTIONED:
+          ss << "Not Actioned";
+          break;
+        case NOTI_GPS_TRUST:
+          ss << "GPS Trust";
+          break;
+        case NOTI_NODE_UPDATE:
+          ss << "Node Update";
+          break;
+      }
+
+      // End line after each entry
+      ss << std::endl;
+    }
+
+    // Return the accumulated output as a string
+    return ss.str();
+  }
+
+  GPS_TRUST_NODE_LOCAL
+  rcl_interfaces::msg::SetParametersResult on_parameter_event_callback(
+    rcl_interfaces::msg::ParameterEvent::UniquePtr event)
+  {
+    // Check if event_name is not one of the expected parameters
+    if (event->node != ntrip_client_node_ && event->node != ublox_dgnss_node_) {
+      // Return or handle the event when it's not one of the specified names
+      return rcl_interfaces::msg::SetParametersResult();
+    }
+
+    // ignore qos overrides
+    event->new_parameters.erase(
+      std::remove_if(
+        event->new_parameters.begin(),
+        event->new_parameters.end(),
+        [](const auto & item) {
+          const char * param_override_prefix = "qos_overrides.";
+          return std::strncmp(
+            item.name.c_str(), param_override_prefix, sizeof(param_override_prefix) - 1) == 0u;
+        }),
+      event->new_parameters.end());
+    if (
+      !event->new_parameters.size() && !event->changed_parameters.size() &&
+      !event->deleted_parameters.size())
+    {
+      return rcl_interfaces::msg::SetParametersResult();
+    }
+
+
+    auto get_node_type = [&](const std::string & node_str) -> NodeParamType {
+      if (node_str == ntrip_client_node_) {
+        return NPT_NTRIP_CLIENT;
+      } else if (node_str == ublox_dgnss_node_) {
+        return NPT_UBX_CFG;
+      } else {
+        throw std::invalid_argument("Unknown node string: " + node_str);
+      }
+    };
+
+    // lambda function to update the parameter cache map.
+    auto update_params_cache = [&](const rcl_interfaces::msg::Parameter & msg_p,
+      NodeParamType node_type,
+      ParamStatus status) {
+      rclcpp::Parameter p = rclcpp::Parameter::from_parameter_msg(msg_p);
+
+      // Create the key and update the params_cache_map_ with the passed node_type and status
+      auto key = param_key_t {p.get_name(), node_type};
+      params_cache_map_[key] = {p.get_parameter_value(), p.get_type(), status, NOTI_NODE_UPDATE};
+    };
+
+    {
+      // Lock the mutex to ensure thread safety
+      std::lock_guard<std::mutex> lock(params_cache_mutex_);
+
+      std::stringstream ss;
+      ss << "\nParameter event: ";
+      // ss << event->node;
+
+      auto node_type = get_node_type(event->node);
+      ss << paramTypeToString(node_type);
+
+      ss << "\n new parameters:";
+      for (auto & new_parameter : event->new_parameters) {
+        ss << "\n  " << new_parameter.name;
+        update_params_cache(new_parameter, node_type, PARAM_INITIAL);
+      }
+      ss << "\n changed parameters:";
+      for (auto & changed_parameter : event->changed_parameters) {
+        ss << "\n  " << changed_parameter.name;
+        update_params_cache(changed_parameter, node_type, PARAM_CHANGED);
+      }
+      ss << "\n deleted parameters:";
+      for (auto & deleted_parameter : event->deleted_parameters) {
+        ss << "\n  " << deleted_parameter.name;
+        update_params_cache(deleted_parameter, node_type, PARAM_DELETED);
+      }
+      ss << "\n";
+      RCLCPP_INFO(this->get_logger(), "%s", ss.str().c_str());
+    }
+
+    return rcl_interfaces::msg::SetParametersResult();
+  }
+
+  GPS_TRUST_NODE_LOCAL
+  Json::Value json_from_params_cache_map()
+  {
+    Json::Value ntypes;
+    Json::Value names;
+    Json::Value values;
+    Json::Value ptypes;
+    Json::Value statuses;
+
+    // Iterate over the params_cache_map_ and process each entry
+    for (const auto & entry : params_cache_map_) {
+      // Extract key and state
+      const param_key_t & key = entry.first;
+      const param_state_t & state = entry.second;
+
+      // only want to send the intitial or udpated - keep chatter low
+      if (state.noti != NOTI_NOT_ACTIONED && state.noti != NOTI_NODE_UPDATE) {
+        continue;
+      }
+
+      // Append key components
+      ntypes.append(static_cast<int>(key.node_type));
+      names.append(key.name);
+
+      // Append state components
+      switch (state.value.get_type()) {
+        case rclcpp::ParameterType::PARAMETER_BOOL:
+          values.append(state.value.get<bool>());
+          break;
+        case rclcpp::ParameterType::PARAMETER_INTEGER:
+          values.append(state.value.get<int64_t>());
+          break;
+        case rclcpp::ParameterType::PARAMETER_DOUBLE:
+          values.append(state.value.get<double>());
+          break;
+        case rclcpp::ParameterType::PARAMETER_STRING:
+          values.append(state.value.get<std::string>());
+          break;
+        default:
+          RCLCPP_ERROR(
+            get_logger(), "parameter: %s has an unknown value: %s", key.name.c_str(),
+            state.value.get<std::string>().c_str());
+          values.append("UNKNOWN");
+          break;
+      }
+
+      ptypes.append(static_cast<int>(state.type));        // Convert ParameterType to integer
+      statuses.append(static_cast<int>(state.status));          // Convert ParamStatus to integer
+    }
+
+    Json::Value nparams; // short for node params
+    nparams["ntypes"] = ntypes;
+    nparams["names"] = names;
+    nparams["values"] = values;
+    nparams["ptypes"] = ptypes;
+    nparams["statuses"] = statuses;
+
+    return nparams;
+  }
+
   GPS_TRUST_NODE_LOCAL
   Json::Value json_from_ubx_nav_llh(const ublox_ubx_msgs::msg::UBXNavHPPosLLH::SharedPtr msg)
   {
@@ -135,6 +561,36 @@ private:
     if (nav_sat_json_.use_count() != 0) {
       json_request["nav_sat"] = *nav_sat_json_.get();
       nav_sat_json_.reset();
+    }
+
+    size_t pcm_len = 0;
+    // Iterate through the map
+    for (const auto & entry : params_cache_map_) {
+      const param_state_t & state = entry.second;   // Access the param_state_t struct
+
+      // Check if the notification status is either NOTI_NOT_ACTIONED or NOTI_NODE_UPDATE
+      if (state.noti == NOTI_NOT_ACTIONED || state.noti == NOTI_NODE_UPDATE) {
+        ++pcm_len;      // Increment the counter if the condition is satisfied
+      }
+    }
+
+    RCLCPP_DEBUG(
+      get_logger(), "params_cache_map_ to be actioned or have been updated len: %ld",
+      pcm_len);
+
+    if (pcm_len > 0) {
+      // Lock the mutex to ensure thread safety
+      std::lock_guard<std::mutex> lock(params_cache_mutex_);
+
+      json_request["nparams"] = json_from_params_cache_map();
+
+      for (auto & entry : params_cache_map_) {
+        auto & state = entry.second;
+        if (state.noti == NOTI_NOT_ACTIONED || state.noti == NOTI_NODE_UPDATE) {
+          state.noti = NOTI_GPS_TRUST;
+        }
+      }
+
     }
 
     Json::StreamWriterBuilder builder;
@@ -199,6 +655,22 @@ private:
 
     ss["spf_det_enabled"] = static_cast<bool>(msg->spf_det_enabled);
     ss["spoofing_state"] = msg->spoofing_state;
+
+    if (msg->version >= 2) {
+      ss["jam_num_cent_freqs"] = msg->jam_num_cent_freqs;
+
+      Json::Value cent_freqs;
+      Json::Value jammed_states;
+
+      for (size_t i = 0; i < msg->jam_num_cent_freqs; i++) {
+        auto jm = msg->jam_state_cent_freqs[i];
+        cent_freqs.append(jm.cent_freq);
+        jammed_states.append(jm.jammed);
+      }
+
+      ss["cent_freqs"] = cent_freqs;
+      ss["jammed_states"] = jammed_states;
+    }
 
     return ss;
   }
@@ -541,6 +1013,8 @@ private:
       if (use_gzip_encoding) {
         headers = curl_slist_append(headers, "Content-Encoding: gzip");
       }
+
+      curl_easy_setopt(curl, CURLOPT_MAXAGE_CONN, maxage_conn_);
 
       // Prepare the API key header
       std::string api_key_header = "x-api-key:" + api_key_;
