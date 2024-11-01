@@ -22,6 +22,7 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <algorithm>
 
 #include "rcl_interfaces/msg/parameter_event.hpp"
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
@@ -89,6 +90,12 @@ public:
     pub_ =
       this->create_publisher<gps_trust_msgs::msg::GPSTrustIndicator>(
       "gps_trust_indicator", qos, pub_options);
+
+    param_cache_helper_ = std::make_unique<ParamCacheHelper>(
+      this->get_logger(),
+      params_cache_mutex_,
+      params_cache_map_
+    );
 
     auto parameters_client = std::make_shared<rclcpp::SyncParametersClient>(this);
     while (!parameters_client->wait_for_service(1s)) {
@@ -171,6 +178,7 @@ private:
 
   std::map<param_key_t, param_state_t> params_cache_map_;
   std::mutex params_cache_mutex_;  // Mutex to protect access to the map
+  std::unique_ptr<ParamCacheHelper> param_cache_helper_;
 
   std::string ntrip_client_node_;
   std::string ublox_dgnss_node_;
@@ -255,10 +263,10 @@ private:
 
     // Filter out excluded parameter names
     std::vector<std::string> filtered_parameter_names;
-    for (const auto &name : ublox_parameter_list.names) {
-        if (excluded_names.find(name) == excluded_names.end()) {
-            filtered_parameter_names.push_back(name);
-        }
+    for (const auto & name : ublox_parameter_list.names) {
+      if (excluded_names.find(name) == excluded_names.end()) {
+        filtered_parameter_names.push_back(name);
+      }
     }
 
     auto parameters_future = ublox_parameters_client_->get_parameters(filtered_parameter_names);
@@ -425,7 +433,7 @@ private:
       // ss << event->node;
 
       auto node_type = get_node_type(event->node);
-      ss << paramTypeToString(node_type);
+      ss << param_type_to_string(node_type);
 
       ss << "\n new parameters:";
       for (auto & new_parameter : event->new_parameters) {
@@ -636,513 +644,643 @@ private:
       gps_trust_msg.trust_level = json_response["trustLevel"].asInt();
       gps_trust_msg.status = json_response["status"].asString();
       pub_->publish(gps_trust_msg);
-    }
-  }
 
-  GPS_TRUST_NODE_LOCAL
-  Json::Value json_from_ubx_sec_sec(const ublox_ubx_msgs::msg::UBXSecSig::SharedPtr msg)
-  {
-    Json::Value json_stamp;
-    json_stamp["sec"] = msg->header.stamp.sec;
-    json_stamp["nanosec"] = msg->header.stamp.nanosec;
-
-    Json::Value ss;
-    ss["timestamp"] = json_stamp;
-    ss["frame_id"] = msg->header.frame_id;
-
-    ss["jam_det_enabled"] = static_cast<bool>(msg->jam_det_enabled);
-    ss["jamming_state"] = msg->jamming_state;
-
-    ss["spf_det_enabled"] = static_cast<bool>(msg->spf_det_enabled);
-    ss["spoofing_state"] = msg->spoofing_state;
-
-    if (msg->version >= 2) {
-      ss["jam_num_cent_freqs"] = msg->jam_num_cent_freqs;
-
-      Json::Value cent_freqs;
-      Json::Value jammed_states;
-
-      for (size_t i = 0; i < msg->jam_num_cent_freqs; i++) {
-        auto jm = msg->jam_state_cent_freqs[i];
-        cent_freqs.append(jm.cent_freq);
-        jammed_states.append(jm.jammed);
-      }
-
-      ss["cent_freqs"] = cent_freqs;
-      ss["jammed_states"] = jammed_states;
-    }
-
-    return ss;
-  }
-
-  GPS_TRUST_NODE_LOCAL
-  void ubx_sec_sig_callback(const ublox_ubx_msgs::msg::UBXSecSig::SharedPtr msg)
-  {
-    sec_sig_json_ = std::make_shared<Json::Value>(json_from_ubx_sec_sec(msg));
-
-    RCLCPP_DEBUG(get_logger(), "sec_sig_json: %s", sec_sig_json_->toStyledString().c_str());
-  }
-
-  GPS_TRUST_NODE_LOCAL
-  Json::Value json_from_ubx_nav_orb(const ublox_ubx_msgs::msg::UBXNavOrb::SharedPtr msg)
-  {
-    Json::Value json_stamp;
-    json_stamp["sec"] = msg->header.stamp.sec;
-    json_stamp["nanosec"] = msg->header.stamp.nanosec;
-
-    Json::Value no;
-    no["timestamp"] = json_stamp;
-    no["frame_id"] = msg->header.frame_id;
-
-    no["itow"] = msg->itow;
-    no["num_sv"] = msg->num_sv;
-
-    Json::Value gnss_ids;
-    Json::Value sv_ids;
-    Json::Value healths;
-    Json::Value visibilities;
-    Json::Value eph_usabilities;
-    Json::Value eph_sources;
-    Json::Value alm_usabilities;
-    Json::Value alm_sources;
-    Json::Value ano_aop_usabilities;
-    Json::Value orb_types;
-
-    for (size_t i = 0; i < msg->num_sv; i++) {
-      auto sv = msg->sv_info[i];
-      gnss_ids.append(sv.gnss_id);
-      sv_ids.append(sv.sv_id);
-      healths.append(sv.sv_flag.health);
-      visibilities.append(sv.sv_flag.visibility);
-      eph_usabilities.append(sv.eph.eph_usability);
-      eph_sources.append(sv.eph.eph_source);
-      alm_usabilities.append(sv.alm.alm_usability);
-      alm_sources.append(sv.alm.alm_source);
-      ano_aop_usabilities.append(sv.other_orb.ano_aop_usability);
-      orb_types.append(sv.other_orb.orb_type);
-    }
-
-    no["gnss_ids"] = gnss_ids;
-    no["sv_ids"] = sv_ids;
-    no["healths"] = healths;
-    no["visibilities"] = visibilities;
-    no["eph_usabilities"] = eph_usabilities;
-    no["eph_sources"] = eph_sources;
-    no["alm_usabilities"] = alm_usabilities;
-    no["alm_sources"] = alm_sources;
-    no["ano_aop_usabilities"] = ano_aop_usabilities;
-    no["orb_types"] = orb_types;
-
-    return no;
-  }
-
-  GPS_TRUST_NODE_LOCAL
-
-  std::string flatten_json_array(std::string name, Json::Value array)
-  {
-    std::ostringstream oss;
-    oss << std::quoted(name) << " : [";
-    size_t i = 0;
-    for (auto id: array) {
-      if (i++ > 0) {oss << ",";}
-      oss << id;
-    }
-    oss << "]";
-    return oss.str();
-  }
-
-  GPS_TRUST_NODE_LOCAL
-  void ubx_nav_orb_callback(const ublox_ubx_msgs::msg::UBXNavOrb::SharedPtr msg)
-  {
-    nav_orb_json_ = std::make_shared<Json::Value>(json_from_ubx_nav_orb(msg));
-
-    auto json = *nav_orb_json_.get();
-
-    using std::endl;
-
-    // need to format our own json response here due to the arrayas
-    std::ostringstream oss;
-    oss << "{" << endl;
-    oss << "\t" << std::quoted("frame_id") << " : " << json["frame_id"].toStyledString();
-    oss << "\t" << std::quoted("timestamp") << " : " << json["timestamp"].toStyledString();
-    oss << "\t" << std::quoted("itow") << " : " << json["itow"].toStyledString();
-    oss << "\t" << std::quoted("num_sv") << " : " << json["num_sv"].toStyledString();
-
-    oss << "\t" << flatten_json_array("gnss_ids", json["gnss_ids"]) << endl;
-    oss << "\t" << flatten_json_array("sv_ids", json["sv_ids"]) << endl;
-    oss << "\t" << flatten_json_array("healths", json["healths"]) << endl;
-    oss << "\t" << flatten_json_array("visibilities", json["visibilities"]) << endl;
-    oss << "\t" << flatten_json_array("eph_usabilities", json["eph_usabilities"]) << endl;
-    oss << "\t" << flatten_json_array("eph_sources", json["eph_sources"]) << endl;
-    oss << "\t" << flatten_json_array("alm_usabilities", json["alm_usabilities"]) << endl;
-    oss << "\t" << flatten_json_array("alm_sources", json["alm_sources"]) << endl;
-    oss << "\t" << flatten_json_array("ano_aop_usabilities", json["ano_aop_usabilities"]) << endl;
-    oss << "\t" << flatten_json_array("orb_types", json["orb_types"]) << endl;
-
-    oss << "}" << endl;
-
-    RCLCPP_DEBUG(get_logger(), "nav_orb_json: %s", oss.str().c_str());
-  }
-
-  GPS_TRUST_NODE_LOCAL
-  Json::Value json_from_ubx_nav_sat(const ublox_ubx_msgs::msg::UBXNavSat::SharedPtr msg)
-  {
-    Json::Value json_stamp;
-    json_stamp["sec"] = msg->header.stamp.sec;
-    json_stamp["nanosec"] = msg->header.stamp.nanosec;
-
-    Json::Value ns;
-    ns["timestamp"] = json_stamp;
-    ns["frame_id"] = msg->header.frame_id;
-
-    ns["itow"] = msg->itow;
-    ns["num_svs"] = msg->num_svs;
-
-    Json::Value gnss_ids;
-    Json::Value sv_ids;
-    Json::Value cnos;
-    Json::Value elevs;
-    Json::Value azims;
-    Json::Value pr_ress;
-    Json::Value quality_inds;
-    Json::Value sv_useds;
-    Json::Value healths;
-    Json::Value diff_corrs;
-    Json::Value smoothedes;
-    Json::Value orbit_sources;
-    Json::Value eph_avails;
-    Json::Value alm_avails;
-    Json::Value ano_avails;
-    Json::Value aop_avails;
-    Json::Value sbas_corr_useds;
-    Json::Value rtcm_corr_useds;
-    Json::Value slas_corr_useds;
-    Json::Value spartn_corr_useds;
-    Json::Value pr_corr_useds;
-    Json::Value cr_corr_useds;
-    Json::Value do_corr_useds;
-    Json::Value clas_corr_useds;
-
-    for (size_t i = 0; i < msg->num_svs; i++) {
-      auto sv = msg->sv_info[i];
-      gnss_ids.append(sv.gnss_id);
-      sv_ids.append(sv.sv_id);
-      cnos.append(sv.cno);
-      elevs.append(sv.elev);
-      azims.append(sv.azim);
-      pr_ress.append(sv.pr_res * 0.1);
-      quality_inds.append(sv.flags.quality_ind);
-      sv_useds.append(sv.flags.sv_used);
-      healths.append(sv.flags.health);
-      diff_corrs.append(sv.flags.diff_corr);
-      smoothedes.append(sv.flags.smoothed);
-      orbit_sources.append(sv.flags.orbit_source);
-      eph_avails.append(sv.flags.eph_avail);
-      alm_avails.append(sv.flags.alm_avail);
-      ano_avails.append(sv.flags.ano_avail);
-      aop_avails.append(sv.flags.aop_avail);
-      sbas_corr_useds.append(sv.flags.sbas_corr_used);
-      rtcm_corr_useds.append(sv.flags.rtcm_corr_used);
-      slas_corr_useds.append(sv.flags.slas_corr_used);
-      spartn_corr_useds.append(sv.flags.spartn_corr_used);
-      pr_corr_useds.append(sv.flags.pr_corr_used);
-      cr_corr_useds.append(sv.flags.cr_corr_used);
-      do_corr_useds.append(sv.flags.do_corr_used);
-      clas_corr_useds.append(sv.flags.clas_corr_used);
-    }
-
-    ns["gnss_ids"] = gnss_ids;
-    ns["sv_ids"] = sv_ids;
-    ns["cnos"] = cnos;
-    ns["elevs"] = elevs;
-    ns["azims"] = azims;
-    ns["pr_ress"] = pr_ress;
-    ns["quality_inds"] = quality_inds;
-    ns["sv_useds"] = sv_useds;
-    ns["healths"] = healths;
-    ns["diff_corrs"] = diff_corrs;
-    ns["smoothedes"] = smoothedes;
-    ns["orbit_sources"] = orbit_sources;
-    ns["eph_avails"] = eph_avails;
-    ns["alm_avails"] = alm_avails;
-    ns["ano_avails"] = ano_avails;
-    ns["aop_avails"] = aop_avails;
-    ns["sbas_corr_useds"] = sbas_corr_useds;
-    ns["rtcm_corr_useds"] = rtcm_corr_useds;
-    ns["slas_corr_useds"] = slas_corr_useds;
-    ns["spartn_corr_useds"] = spartn_corr_useds;
-    ns["pr_corr_useds"] = pr_corr_useds;
-    ns["cr_corr_useds"] = cr_corr_useds;
-    ns["do_corr_useds"] = do_corr_useds;
-    ns["clas_corr_useds"] = clas_corr_useds;
-
-    return ns;
-  }
-
-  GPS_TRUST_NODE_LOCAL
-  void ubx_nav_sat_callback(const ublox_ubx_msgs::msg::UBXNavSat::SharedPtr msg)
-  {
-    nav_sat_json_ = std::make_shared<Json::Value>(json_from_ubx_nav_sat(msg));
-
-    auto json = *nav_sat_json_.get();
-
-    using std::endl;
-
-    // need to format our own json response here due to the arrayas
-    std::ostringstream oss;
-    oss << "{" << endl;
-    oss << "\t" << std::quoted("frame_id") << " : " << json["frame_id"].toStyledString();
-    oss << "\t" << std::quoted("timestamp") << " : " << json["timestamp"].toStyledString();
-    oss << "\t" << std::quoted("itow") << " : " << json["itow"].toStyledString();
-    oss << "\t" << std::quoted("num_svs") << " : " << json["num_svs"].toStyledString();
-
-    oss << "\t" << flatten_json_array("gnss_ids", json["gnss_ids"]) << endl;
-    oss << "\t" << flatten_json_array("sv_ids", json["sv_ids"]) << endl;
-    oss << "\t" << flatten_json_array("cnos", json["cnos"]) << endl;
-    oss << "\t" << flatten_json_array("elevs", json["elevs"]) << endl;
-    oss << "\t" << flatten_json_array("azims", json["azims"]) << endl;
-    oss << "\t" << flatten_json_array("pr_ress", json["azims"]) << endl;
-    oss << "\t" << flatten_json_array("quality_inds", json["quality_inds"]) << endl;
-    oss << "\t" << flatten_json_array("sv_useds", json["sv_useds"]) << endl;
-    oss << "\t" << flatten_json_array("healths", json["healths"]) << endl;
-    oss << "\t" << flatten_json_array("diff_corrs", json["diff_corrs"]) << endl;
-    oss << "\t" << flatten_json_array("smoothedes", json["smoothedes"]) << endl;
-    oss << "\t" << flatten_json_array("orbit_sources", json["orbit_sources"]) << endl;
-    oss << "\t" << flatten_json_array("eph_avails", json["eph_avails"]) << endl;
-    oss << "\t" << flatten_json_array("alm_avails", json["alm_avails"]) << endl;
-    oss << "\t" << flatten_json_array("ano_avails", json["ano_avails"]) << endl;
-    oss << "\t" << flatten_json_array("aop_avails", json["aop_avails"]) << endl;
-    oss << "\t" << flatten_json_array("sbas_corr_useds", json["sbas_corr_useds"]) << endl;
-    oss << "\t" << flatten_json_array("rtcm_corr_useds", json["rtcm_corr_useds"]) << endl;
-    oss << "\t" << flatten_json_array("slas_corr_useds", json["slas_corr_useds"]) << endl;
-    oss << "\t" << flatten_json_array("spartn_corr_useds", json["spartn_corr_useds"]) << endl;
-    oss << "\t" << flatten_json_array("pr_corr_useds", json["pr_corr_useds"]) << endl;
-    oss << "\t" << flatten_json_array("cr_corr_useds", json["cr_corr_useds"]) << endl;
-    oss << "\t" << flatten_json_array("do_corr_useds", json["do_corr_useds"]) << endl;
-    oss << "\t" << flatten_json_array("clas_corr_useds", json["clas_corr_useds"]) << endl;
-
-    oss << "}" << endl;
-
-    RCLCPP_DEBUG(get_logger(), "nav_sat_json: %s", oss.str().c_str());
-  }
-
-  GPS_TRUST_NODE_LOCAL
-  std::string compressString(const std::string & str)
-  {
-    z_stream zs;
-    zs.zalloc = Z_NULL;
-    zs.zfree = Z_NULL;
-    zs.opaque = Z_NULL;
-    zs.avail_in = str.size();
-    zs.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(str.data()));
-
-    if (deflateInit(&zs, Z_DEFAULT_COMPRESSION) != Z_OK) {
-      throw std::runtime_error("Failed to initialize zlib deflate");
-    }
-
-    std::vector<Bytef> compressed_data;
-    const size_t BUFSIZE = 128;
-    Bytef outbuffer[BUFSIZE];
-
-    do {
-      zs.avail_out = BUFSIZE;
-      zs.next_out = outbuffer;
-      deflate(&zs, Z_FINISH);
-
-      for (size_t i = 0; i < BUFSIZE - zs.avail_out; ++i) {
-        compressed_data.push_back(outbuffer[i]);
-      }
-    } while (zs.avail_out == 0);
-
-    deflateEnd(&zs);
-
-    return std::string(compressed_data.begin(), compressed_data.end());
-  }
-
-  GPS_TRUST_NODE_LOCAL
-  // Function to decompress a gzip-compressed string
-  std::string decompressGzip(const std::string & compressed)
-  {
-    std::vector<Bytef> decompressed;
-    z_stream zs;
-    zs.zalloc = Z_NULL;
-    zs.zfree = Z_NULL;
-    zs.opaque = Z_NULL;
-    zs.avail_in = compressed.size();
-    zs.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(compressed.data()));
-
-    if (inflateInit2(&zs, MAX_WBITS + 16) != Z_OK) {
-      throw std::runtime_error("Failed to initialize zlib inflate");
-    }
-
-    const size_t BUFSIZE = 128;
-    Bytef outbuffer[BUFSIZE];
-
-    do {
-      zs.avail_out = BUFSIZE;
-      zs.next_out = outbuffer;
-      inflate(&zs, Z_SYNC_FLUSH);
-
-      for (size_t i = 0; i < BUFSIZE - zs.avail_out; ++i) {
-        decompressed.push_back(outbuffer[i]);
-      }
-    } while (zs.avail_out == 0);
-
-    inflateEnd(&zs);
-
-    return std::string(decompressed.begin(), decompressed.end());
-  }
-
-  GPS_TRUST_NODE_LOCAL
-  Json::Value callAPI(Json::Value & json_request, bool use_gzip_encoding)
-  {
-    CURL * curl;
-    CURLcode res;
-    std::string readBuffer;
-    bool is_gzip = false;
-
-    curl = curl_easy_init();
-    if (curl) {
-      // Enable gzip compressed response
-      curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "gzip");
-
-      curl_easy_setopt(curl, CURLOPT_URL, api_url_.c_str());
-      // Add headers such as API Key
-      struct curl_slist * headers = NULL;
-      headers = curl_slist_append(headers, "Content-Type: application/json");
-      if (use_gzip_encoding) {
-        headers = curl_slist_append(headers, "Content-Encoding: gzip");
-      }
-
-      curl_easy_setopt(curl, CURLOPT_MAXAGE_CONN, maxage_conn_);
-
-      // Prepare the API key header
-      std::string api_key_header = "x-api-key:" + api_key_;
-
-      // Set the custom headers
-      headers = curl_slist_append(headers, api_key_header.c_str());
-      curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-
-      // Set the User-Agent
-      curl_easy_setopt(curl, CURLOPT_USERAGENT, "GPSTrustROS2Agent/1.0");
-
-      // Set the POST option
-      curl_easy_setopt(curl, CURLOPT_POST, 1L);
-
-      // Add data
-      std::string request_body = json_request.toStyledString();
-      std::string compressed_body;
-
-      if (use_gzip_encoding) {
-        compressed_body = compressString(request_body);
-        // Set compressed POST data
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, compressed_body.size());
-        curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, compressed_body.data());
-      } else {
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_body.c_str());
-      }
-
-      // Receive data
-      curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
-      curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
-
-      // Set header function and data
-      curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
-      curl_easy_setopt(curl, CURLOPT_HEADERDATA, &is_gzip);
-
-      res = curl_easy_perform(curl);
-
-      if (res != CURLE_OK) {
-        RCLCPP_ERROR(get_logger(), "curl_easy_perform() failed: %s", curl_easy_strerror(res));
-      }
-
-      curl_easy_cleanup(curl);
-
-      if (readBuffer.empty()) {
-        RCLCPP_WARN(get_logger(), "curl readBuffer: '%s'", readBuffer.c_str());
-      } else {
-        RCLCPP_DEBUG(get_logger(), "curl readBuffer: '%s'", readBuffer.c_str());
+      // RCLCPP_INFO(
+      //   get_logger(), "json_response.isMember(\"action\"): %d",
+      //   json_response.isMember("action"));
+
+      // First check if we have a non-null action
+      if (json_response.isMember("action") && !json_response["action"].isNull()) {
+        // Process the EntityAction
+        const auto & action_json = json_response["action"];
+
+        // Additional safety checks for the action structure
+        if (action_json.isObject() &&
+          action_json.isMember("names") && action_json.isMember("values") &&
+          action_json.isMember("ptypes") &&
+          action_json["names"].isArray() && action_json["values"].isArray() &&
+          action_json["ptypes"].isArray())
+        {
+
+          const auto & names = action_json["names"];
+          const auto & values = action_json["values"];
+          const auto & ptypes = action_json["ptypes"];
+
+          // Process the action data here
+          for (Json::Value::ArrayIndex i = 0; i < names.size(); i++) {
+            auto name = names[i].asString();
+            auto value = values[i].asString();
+            auto ptype = ptypes[i].asUInt();
+
+            RCLCPP_INFO(
+              get_logger(), "Action param: %s = %s (type: %d)",
+              name.c_str(),
+              value.c_str(),
+              ptype);
+            // Add your action processing logic here
+
+            if (!param_cache_helper_->check_param_in_cache(name, NodeParamType::NPT_UBX_CFG)) {
+              RCLCPP_WARN(
+                get_logger(), "Action name: %s not in param_cache .. doing nothing!",
+                name.c_str());
+
+            } else {
+              param_cache_helper_->update_param_notification(name, NPT_UBX_CFG, NOTI_NODE_UPDATE);
+
+              auto param_optional = param_cache_helper_->get_param_from_cache(
+                name,
+                NodeParamType::NPT_UBX_CFG);
+              if (param_optional) {
+                auto param = *param_optional;
+                std::vector<rclcpp::Parameter> parameters;
+
+                try {
+                  switch (param.type) {
+                    case ParamType::Bool: {
+                        std::string bool_str = value;
+                        // Convert to lowercase for case-insensitive comparison
+                        std::transform(
+                          bool_str.begin(), bool_str.end(), bool_str.begin(),
+                          ::tolower);
+                        parameters.emplace_back(name, bool_str == "true" || bool_str == "1");
+                        break;
+                      }
+                    case ParamType::Int:
+                      parameters.emplace_back(name, std::stoi(value));
+                      break;
+                    case ParamType::Double:
+                      parameters.emplace_back(name, std::stod(value));
+                      break;
+                    case ParamType::String:
+                      parameters.emplace_back(name, value);
+                      break;
+                    case ParamType::Null:
+                      RCLCPP_WARN(this->get_logger(), "Parameter '%s' has Null type", name.c_str());
+                      return;
+                    default:
+                      RCLCPP_ERROR(
+                        this->get_logger(), "Unknown parameter type for '%s'",
+                        name.c_str());
+                      return;
+                  }
+
+                  // For the whole parameters vector
+                  for (const auto & param : parameters) {
+                    RCLCPP_INFO(
+                      get_logger(),
+                      "Parameter: name='%s' type=%d value=%s",
+                      param.get_name().c_str(),
+                      param.get_type(),
+                      param.value_to_string().c_str()
+                    );
+                  }
+
+                  auto callback = [this, name, parameters](
+                    std::shared_future<std::vector<rcl_interfaces::msg::SetParametersResult>> future)
+                  {
+                    auto results = future.get();
+                    for (const auto & result : results) {
+                      if (!result.successful) {
+                        RCLCPP_ERROR(
+                          get_logger(),
+                          "Failed to set parameter '%s' (value: %s): %s",
+                          name.c_str(),
+                          parameters.front().value_to_string().c_str(),
+                          result.reason.c_str()
+                        );
+                      } else {
+                        RCLCPP_INFO(
+                          get_logger(),
+                          "Successfully set parameter '%s' to %s",
+                          name.c_str(),
+                          parameters.front().value_to_string().c_str()
+                        );
+                      }
+                    }
+                  };
+
+                  ublox_parameters_client_->set_parameters(parameters, callback);
+
+                } catch (const std::exception & e) {
+                  RCLCPP_ERROR(
+                    get_logger(),
+                    "Error converting parameter '%s': %s",
+                    name.c_str(),
+                    e.what()
+                  );
+                }
+              }
+            }
+          }
+        }
       }
     }
+}
 
+GPS_TRUST_NODE_LOCAL
+Json::Value json_from_ubx_sec_sec(const ublox_ubx_msgs::msg::UBXSecSig::SharedPtr msg)
+{
+  Json::Value json_stamp;
+  json_stamp["sec"] = msg->header.stamp.sec;
+  json_stamp["nanosec"] = msg->header.stamp.nanosec;
 
-    Json::Value json_response;
+  Json::Value ss;
+  ss["timestamp"] = json_stamp;
+  ss["frame_id"] = msg->header.frame_id;
 
-    if (!readBuffer.empty()) {
-      // Check the is_gzip flag to see if the content was gzip-encoded
-      if (is_gzip) {
-        // Decompress gzip-encoded content
-        std::string decompressed_content = decompressGzip(readBuffer);
-        std::istringstream response_stream(decompressed_content);
-        response_stream >> json_response;
-      } else {
-        std::istringstream response_stream(readBuffer);
-        response_stream >> json_response;
-      }
+  ss["jam_det_enabled"] = static_cast<bool>(msg->jam_det_enabled);
+  ss["jamming_state"] = msg->jamming_state;
+
+  ss["spf_det_enabled"] = static_cast<bool>(msg->spf_det_enabled);
+  ss["spoofing_state"] = msg->spoofing_state;
+
+  if (msg->version >= 2) {
+    ss["jam_num_cent_freqs"] = msg->jam_num_cent_freqs;
+
+    Json::Value cent_freqs;
+    Json::Value jammed_states;
+
+    for (size_t i = 0; i < msg->jam_num_cent_freqs; i++) {
+      auto jm = msg->jam_state_cent_freqs[i];
+      cent_freqs.append(jm.cent_freq);
+      jammed_states.append(jm.jammed);
     }
 
-    return json_response;
+    ss["cent_freqs"] = cent_freqs;
+    ss["jammed_states"] = jammed_states;
   }
 
-  GPS_TRUST_NODE_LOCAL
-  // Header callback function
-  static size_t headerCallback(char * buffer, size_t size, size_t nitems, void * userdata)
-  {
-    // Calculate the real size of the incoming header
-    size_t real_size = size * nitems;
+  return ss;
+}
 
-    // Convert the header to a string for easier parsing
-    std::string header(buffer, real_size);
+GPS_TRUST_NODE_LOCAL
+void ubx_sec_sig_callback(const ublox_ubx_msgs::msg::UBXSecSig::SharedPtr msg)
+{
+  sec_sig_json_ = std::make_shared<Json::Value>(json_from_ubx_sec_sec(msg));
 
-    // Look for the Content-Encoding header
-    if (header.find("Content-Encoding: gzip") != std::string::npos) {
-      // Set flag or do something to indicate that the content is gzip-encoded
-      bool * is_gzip = static_cast<bool *>(userdata);
-      *is_gzip = true;
+  RCLCPP_DEBUG(get_logger(), "sec_sig_json: %s", sec_sig_json_->toStyledString().c_str());
+}
+
+GPS_TRUST_NODE_LOCAL
+Json::Value json_from_ubx_nav_orb(const ublox_ubx_msgs::msg::UBXNavOrb::SharedPtr msg)
+{
+  Json::Value json_stamp;
+  json_stamp["sec"] = msg->header.stamp.sec;
+  json_stamp["nanosec"] = msg->header.stamp.nanosec;
+
+  Json::Value no;
+  no["timestamp"] = json_stamp;
+  no["frame_id"] = msg->header.frame_id;
+
+  no["itow"] = msg->itow;
+  no["num_sv"] = msg->num_sv;
+
+  Json::Value gnss_ids;
+  Json::Value sv_ids;
+  Json::Value healths;
+  Json::Value visibilities;
+  Json::Value eph_usabilities;
+  Json::Value eph_sources;
+  Json::Value alm_usabilities;
+  Json::Value alm_sources;
+  Json::Value ano_aop_usabilities;
+  Json::Value orb_types;
+
+  for (size_t i = 0; i < msg->num_sv; i++) {
+    auto sv = msg->sv_info[i];
+    gnss_ids.append(sv.gnss_id);
+    sv_ids.append(sv.sv_id);
+    healths.append(sv.sv_flag.health);
+    visibilities.append(sv.sv_flag.visibility);
+    eph_usabilities.append(sv.eph.eph_usability);
+    eph_sources.append(sv.eph.eph_source);
+    alm_usabilities.append(sv.alm.alm_usability);
+    alm_sources.append(sv.alm.alm_source);
+    ano_aop_usabilities.append(sv.other_orb.ano_aop_usability);
+    orb_types.append(sv.other_orb.orb_type);
+  }
+
+  no["gnss_ids"] = gnss_ids;
+  no["sv_ids"] = sv_ids;
+  no["healths"] = healths;
+  no["visibilities"] = visibilities;
+  no["eph_usabilities"] = eph_usabilities;
+  no["eph_sources"] = eph_sources;
+  no["alm_usabilities"] = alm_usabilities;
+  no["alm_sources"] = alm_sources;
+  no["ano_aop_usabilities"] = ano_aop_usabilities;
+  no["orb_types"] = orb_types;
+
+  return no;
+}
+
+GPS_TRUST_NODE_LOCAL
+
+std::string flatten_json_array(std::string name, Json::Value array)
+{
+  std::ostringstream oss;
+  oss << std::quoted(name) << " : [";
+  size_t i = 0;
+  for (auto id: array) {
+    if (i++ > 0) {oss << ",";}
+    oss << id;
+  }
+  oss << "]";
+  return oss.str();
+}
+
+GPS_TRUST_NODE_LOCAL
+void ubx_nav_orb_callback(const ublox_ubx_msgs::msg::UBXNavOrb::SharedPtr msg)
+{
+  nav_orb_json_ = std::make_shared<Json::Value>(json_from_ubx_nav_orb(msg));
+
+  auto json = *nav_orb_json_.get();
+
+  using std::endl;
+
+  // need to format our own json response here due to the arrayas
+  std::ostringstream oss;
+  oss << "{" << endl;
+  oss << "\t" << std::quoted("frame_id") << " : " << json["frame_id"].toStyledString();
+  oss << "\t" << std::quoted("timestamp") << " : " << json["timestamp"].toStyledString();
+  oss << "\t" << std::quoted("itow") << " : " << json["itow"].toStyledString();
+  oss << "\t" << std::quoted("num_sv") << " : " << json["num_sv"].toStyledString();
+
+  oss << "\t" << flatten_json_array("gnss_ids", json["gnss_ids"]) << endl;
+  oss << "\t" << flatten_json_array("sv_ids", json["sv_ids"]) << endl;
+  oss << "\t" << flatten_json_array("healths", json["healths"]) << endl;
+  oss << "\t" << flatten_json_array("visibilities", json["visibilities"]) << endl;
+  oss << "\t" << flatten_json_array("eph_usabilities", json["eph_usabilities"]) << endl;
+  oss << "\t" << flatten_json_array("eph_sources", json["eph_sources"]) << endl;
+  oss << "\t" << flatten_json_array("alm_usabilities", json["alm_usabilities"]) << endl;
+  oss << "\t" << flatten_json_array("alm_sources", json["alm_sources"]) << endl;
+  oss << "\t" << flatten_json_array("ano_aop_usabilities", json["ano_aop_usabilities"]) << endl;
+  oss << "\t" << flatten_json_array("orb_types", json["orb_types"]) << endl;
+
+  oss << "}" << endl;
+
+  RCLCPP_DEBUG(get_logger(), "nav_orb_json: %s", oss.str().c_str());
+}
+
+GPS_TRUST_NODE_LOCAL
+Json::Value json_from_ubx_nav_sat(const ublox_ubx_msgs::msg::UBXNavSat::SharedPtr msg)
+{
+  Json::Value json_stamp;
+  json_stamp["sec"] = msg->header.stamp.sec;
+  json_stamp["nanosec"] = msg->header.stamp.nanosec;
+
+  Json::Value ns;
+  ns["timestamp"] = json_stamp;
+  ns["frame_id"] = msg->header.frame_id;
+
+  ns["itow"] = msg->itow;
+  ns["num_svs"] = msg->num_svs;
+
+  Json::Value gnss_ids;
+  Json::Value sv_ids;
+  Json::Value cnos;
+  Json::Value elevs;
+  Json::Value azims;
+  Json::Value pr_ress;
+  Json::Value quality_inds;
+  Json::Value sv_useds;
+  Json::Value healths;
+  Json::Value diff_corrs;
+  Json::Value smoothedes;
+  Json::Value orbit_sources;
+  Json::Value eph_avails;
+  Json::Value alm_avails;
+  Json::Value ano_avails;
+  Json::Value aop_avails;
+  Json::Value sbas_corr_useds;
+  Json::Value rtcm_corr_useds;
+  Json::Value slas_corr_useds;
+  Json::Value spartn_corr_useds;
+  Json::Value pr_corr_useds;
+  Json::Value cr_corr_useds;
+  Json::Value do_corr_useds;
+  Json::Value clas_corr_useds;
+
+  for (size_t i = 0; i < msg->num_svs; i++) {
+    auto sv = msg->sv_info[i];
+    gnss_ids.append(sv.gnss_id);
+    sv_ids.append(sv.sv_id);
+    cnos.append(sv.cno);
+    elevs.append(sv.elev);
+    azims.append(sv.azim);
+    pr_ress.append(sv.pr_res * 0.1);
+    quality_inds.append(sv.flags.quality_ind);
+    sv_useds.append(sv.flags.sv_used);
+    healths.append(sv.flags.health);
+    diff_corrs.append(sv.flags.diff_corr);
+    smoothedes.append(sv.flags.smoothed);
+    orbit_sources.append(sv.flags.orbit_source);
+    eph_avails.append(sv.flags.eph_avail);
+    alm_avails.append(sv.flags.alm_avail);
+    ano_avails.append(sv.flags.ano_avail);
+    aop_avails.append(sv.flags.aop_avail);
+    sbas_corr_useds.append(sv.flags.sbas_corr_used);
+    rtcm_corr_useds.append(sv.flags.rtcm_corr_used);
+    slas_corr_useds.append(sv.flags.slas_corr_used);
+    spartn_corr_useds.append(sv.flags.spartn_corr_used);
+    pr_corr_useds.append(sv.flags.pr_corr_used);
+    cr_corr_useds.append(sv.flags.cr_corr_used);
+    do_corr_useds.append(sv.flags.do_corr_used);
+    clas_corr_useds.append(sv.flags.clas_corr_used);
+  }
+
+  ns["gnss_ids"] = gnss_ids;
+  ns["sv_ids"] = sv_ids;
+  ns["cnos"] = cnos;
+  ns["elevs"] = elevs;
+  ns["azims"] = azims;
+  ns["pr_ress"] = pr_ress;
+  ns["quality_inds"] = quality_inds;
+  ns["sv_useds"] = sv_useds;
+  ns["healths"] = healths;
+  ns["diff_corrs"] = diff_corrs;
+  ns["smoothedes"] = smoothedes;
+  ns["orbit_sources"] = orbit_sources;
+  ns["eph_avails"] = eph_avails;
+  ns["alm_avails"] = alm_avails;
+  ns["ano_avails"] = ano_avails;
+  ns["aop_avails"] = aop_avails;
+  ns["sbas_corr_useds"] = sbas_corr_useds;
+  ns["rtcm_corr_useds"] = rtcm_corr_useds;
+  ns["slas_corr_useds"] = slas_corr_useds;
+  ns["spartn_corr_useds"] = spartn_corr_useds;
+  ns["pr_corr_useds"] = pr_corr_useds;
+  ns["cr_corr_useds"] = cr_corr_useds;
+  ns["do_corr_useds"] = do_corr_useds;
+  ns["clas_corr_useds"] = clas_corr_useds;
+
+  return ns;
+}
+
+GPS_TRUST_NODE_LOCAL
+void ubx_nav_sat_callback(const ublox_ubx_msgs::msg::UBXNavSat::SharedPtr msg)
+{
+  nav_sat_json_ = std::make_shared<Json::Value>(json_from_ubx_nav_sat(msg));
+
+  auto json = *nav_sat_json_.get();
+
+  using std::endl;
+
+  // need to format our own json response here due to the arrayas
+  std::ostringstream oss;
+  oss << "{" << endl;
+  oss << "\t" << std::quoted("frame_id") << " : " << json["frame_id"].toStyledString();
+  oss << "\t" << std::quoted("timestamp") << " : " << json["timestamp"].toStyledString();
+  oss << "\t" << std::quoted("itow") << " : " << json["itow"].toStyledString();
+  oss << "\t" << std::quoted("num_svs") << " : " << json["num_svs"].toStyledString();
+
+  oss << "\t" << flatten_json_array("gnss_ids", json["gnss_ids"]) << endl;
+  oss << "\t" << flatten_json_array("sv_ids", json["sv_ids"]) << endl;
+  oss << "\t" << flatten_json_array("cnos", json["cnos"]) << endl;
+  oss << "\t" << flatten_json_array("elevs", json["elevs"]) << endl;
+  oss << "\t" << flatten_json_array("azims", json["azims"]) << endl;
+  oss << "\t" << flatten_json_array("pr_ress", json["azims"]) << endl;
+  oss << "\t" << flatten_json_array("quality_inds", json["quality_inds"]) << endl;
+  oss << "\t" << flatten_json_array("sv_useds", json["sv_useds"]) << endl;
+  oss << "\t" << flatten_json_array("healths", json["healths"]) << endl;
+  oss << "\t" << flatten_json_array("diff_corrs", json["diff_corrs"]) << endl;
+  oss << "\t" << flatten_json_array("smoothedes", json["smoothedes"]) << endl;
+  oss << "\t" << flatten_json_array("orbit_sources", json["orbit_sources"]) << endl;
+  oss << "\t" << flatten_json_array("eph_avails", json["eph_avails"]) << endl;
+  oss << "\t" << flatten_json_array("alm_avails", json["alm_avails"]) << endl;
+  oss << "\t" << flatten_json_array("ano_avails", json["ano_avails"]) << endl;
+  oss << "\t" << flatten_json_array("aop_avails", json["aop_avails"]) << endl;
+  oss << "\t" << flatten_json_array("sbas_corr_useds", json["sbas_corr_useds"]) << endl;
+  oss << "\t" << flatten_json_array("rtcm_corr_useds", json["rtcm_corr_useds"]) << endl;
+  oss << "\t" << flatten_json_array("slas_corr_useds", json["slas_corr_useds"]) << endl;
+  oss << "\t" << flatten_json_array("spartn_corr_useds", json["spartn_corr_useds"]) << endl;
+  oss << "\t" << flatten_json_array("pr_corr_useds", json["pr_corr_useds"]) << endl;
+  oss << "\t" << flatten_json_array("cr_corr_useds", json["cr_corr_useds"]) << endl;
+  oss << "\t" << flatten_json_array("do_corr_useds", json["do_corr_useds"]) << endl;
+  oss << "\t" << flatten_json_array("clas_corr_useds", json["clas_corr_useds"]) << endl;
+
+  oss << "}" << endl;
+
+  RCLCPP_DEBUG(get_logger(), "nav_sat_json: %s", oss.str().c_str());
+}
+
+GPS_TRUST_NODE_LOCAL
+std::string compressString(const std::string & str)
+{
+  z_stream zs;
+  zs.zalloc = Z_NULL;
+  zs.zfree = Z_NULL;
+  zs.opaque = Z_NULL;
+  zs.avail_in = str.size();
+  zs.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(str.data()));
+
+  if (deflateInit(&zs, Z_DEFAULT_COMPRESSION) != Z_OK) {
+    throw std::runtime_error("Failed to initialize zlib deflate");
+  }
+
+  std::vector<Bytef> compressed_data;
+  const size_t BUFSIZE = 128;
+  Bytef outbuffer[BUFSIZE];
+
+  do {
+    zs.avail_out = BUFSIZE;
+    zs.next_out = outbuffer;
+    deflate(&zs, Z_FINISH);
+
+    for (size_t i = 0; i < BUFSIZE - zs.avail_out; ++i) {
+      compressed_data.push_back(outbuffer[i]);
+    }
+  } while (zs.avail_out == 0);
+
+  deflateEnd(&zs);
+
+  return std::string(compressed_data.begin(), compressed_data.end());
+}
+
+GPS_TRUST_NODE_LOCAL
+// Function to decompress a gzip-compressed string
+std::string decompressGzip(const std::string & compressed)
+{
+  std::vector<Bytef> decompressed;
+  z_stream zs;
+  zs.zalloc = Z_NULL;
+  zs.zfree = Z_NULL;
+  zs.opaque = Z_NULL;
+  zs.avail_in = compressed.size();
+  zs.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(compressed.data()));
+
+  if (inflateInit2(&zs, MAX_WBITS + 16) != Z_OK) {
+    throw std::runtime_error("Failed to initialize zlib inflate");
+  }
+
+  const size_t BUFSIZE = 128;
+  Bytef outbuffer[BUFSIZE];
+
+  do {
+    zs.avail_out = BUFSIZE;
+    zs.next_out = outbuffer;
+    inflate(&zs, Z_SYNC_FLUSH);
+
+    for (size_t i = 0; i < BUFSIZE - zs.avail_out; ++i) {
+      decompressed.push_back(outbuffer[i]);
+    }
+  } while (zs.avail_out == 0);
+
+  inflateEnd(&zs);
+
+  return std::string(decompressed.begin(), decompressed.end());
+}
+
+GPS_TRUST_NODE_LOCAL
+Json::Value callAPI(Json::Value & json_request, bool use_gzip_encoding)
+{
+  CURL * curl;
+  CURLcode res;
+  std::string readBuffer;
+  bool is_gzip = false;
+
+  curl = curl_easy_init();
+  if (curl) {
+    // Enable gzip compressed response
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "gzip");
+
+    curl_easy_setopt(curl, CURLOPT_URL, api_url_.c_str());
+    // Add headers such as API Key
+    struct curl_slist * headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    if (use_gzip_encoding) {
+      headers = curl_slist_append(headers, "Content-Encoding: gzip");
     }
 
-    return real_size;
+    curl_easy_setopt(curl, CURLOPT_MAXAGE_CONN, maxage_conn_);
+
+    // Prepare the API key header
+    std::string api_key_header = "x-api-key:" + api_key_;
+
+    // Set the custom headers
+    headers = curl_slist_append(headers, api_key_header.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    // Set the User-Agent
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "GPSTrustROS2Agent/1.0");
+
+    // Set the POST option
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+
+    // Add data
+    std::string request_body = json_request.toStyledString();
+    std::string compressed_body;
+
+    if (use_gzip_encoding) {
+      compressed_body = compressString(request_body);
+      // Set compressed POST data
+      curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, compressed_body.size());
+      curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, compressed_body.data());
+    } else {
+      curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_body.c_str());
+    }
+
+    // Receive data
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
+
+    // Set header function and data
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &is_gzip);
+
+    res = curl_easy_perform(curl);
+
+    if (res != CURLE_OK) {
+      RCLCPP_ERROR(get_logger(), "curl_easy_perform() failed: %s", curl_easy_strerror(res));
+    }
+
+    curl_easy_cleanup(curl);
+
+    if (readBuffer.empty()) {
+      RCLCPP_WARN(get_logger(), "curl readBuffer: '%s'", readBuffer.c_str());
+    } else {
+      RCLCPP_DEBUG(get_logger(), "curl readBuffer: '%s'", readBuffer.c_str());
+    }
   }
 
-  GPS_TRUST_NODE_LOCAL
-  // Function to be used with libcurl for writing received data into a string
-  static size_t writeCallback(void * contents, size_t size, size_t nmemb, void * userp)
-  {
-    // Calculate the real size of the incoming data
-    size_t real_size = size * nmemb;
 
-    // Cast the pointer for the output buffer to std::string
-    std::string * out_str = static_cast<std::string *>(userp);
+  Json::Value json_response;
 
-    // Append the received data to the output string
-    out_str->append(static_cast<char *>(contents), real_size);
-
-    // Return the size of the data taken
-    return real_size;
+  if (!readBuffer.empty()) {
+    // Check the is_gzip flag to see if the content was gzip-encoded
+    if (is_gzip) {
+      // Decompress gzip-encoded content
+      std::string decompressed_content = decompressGzip(readBuffer);
+      std::istringstream response_stream(decompressed_content);
+      response_stream >> json_response;
+    } else {
+      std::istringstream response_stream(readBuffer);
+      response_stream >> json_response;
+    }
   }
 
-  rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavHPPosLLH>::SharedPtr nav_llh_sub_;
-  rclcpp::Subscription<ublox_ubx_msgs::msg::UBXSecSig>::SharedPtr sec_sig_sub_;
-  rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavOrb>::SharedPtr nav_orb_sub_;
-  rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavSat>::SharedPtr nav_sat_sub_;
+  return json_response;
+}
 
-  rclcpp::Publisher<gps_trust_msgs::msg::GPSTrustIndicator>::SharedPtr pub_;
+GPS_TRUST_NODE_LOCAL
+// Header callback function
+static size_t headerCallback(char * buffer, size_t size, size_t nitems, void * userdata)
+{
+  // Calculate the real size of the incoming header
+  size_t real_size = size * nitems;
 
-  std::string api_key_;
-  std::string api_url_;
-  std::string device_id_;
+  // Convert the header to a string for easier parsing
+  std::string header(buffer, real_size);
 
-  std::shared_ptr<Json::Value> sec_sig_json_;
-  std::shared_ptr<Json::Value> nav_orb_json_;
-  std::shared_ptr<Json::Value> nav_sat_json_;
+  // Look for the Content-Encoding header
+  if (header.find("Content-Encoding: gzip") != std::string::npos) {
+    // Set flag or do something to indicate that the content is gzip-encoded
+    bool * is_gzip = static_cast<bool *>(userdata);
+    *is_gzip = true;
+  }
+
+  return real_size;
+}
+
+GPS_TRUST_NODE_LOCAL
+// Function to be used with libcurl for writing received data into a string
+static size_t writeCallback(void * contents, size_t size, size_t nmemb, void * userp)
+{
+  // Calculate the real size of the incoming data
+  size_t real_size = size * nmemb;
+
+  // Cast the pointer for the output buffer to std::string
+  std::string * out_str = static_cast<std::string *>(userp);
+
+  // Append the received data to the output string
+  out_str->append(static_cast<char *>(contents), real_size);
+
+  // Return the size of the data taken
+  return real_size;
+}
+
+rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavHPPosLLH>::SharedPtr nav_llh_sub_;
+rclcpp::Subscription<ublox_ubx_msgs::msg::UBXSecSig>::SharedPtr sec_sig_sub_;
+rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavOrb>::SharedPtr nav_orb_sub_;
+rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavSat>::SharedPtr nav_sat_sub_;
+
+rclcpp::Publisher<gps_trust_msgs::msg::GPSTrustIndicator>::SharedPtr pub_;
+
+std::string api_key_;
+std::string api_url_;
+std::string device_id_;
+
+std::shared_ptr<Json::Value> sec_sig_json_;
+std::shared_ptr<Json::Value> nav_orb_json_;
+std::shared_ptr<Json::Value> nav_sat_json_;
 
 public:
-  GPS_TRUST_NODE_LOCAL
-  ~GPSTrustNode()
-  {
-    curl_global_cleanup();
-    RCLCPP_INFO(this->get_logger(), "finished");
-  }
+GPS_TRUST_NODE_LOCAL
+~GPSTrustNode()
+{
+  curl_global_cleanup();
+  RCLCPP_INFO(this->get_logger(), "finished");
+}
 };
 }  // namespace gps_trust
 
