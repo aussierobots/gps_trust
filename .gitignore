@@ -92,3 +92,5 @@ imgui.ini
 *.exe
 *.out
 *.app
+
+ublox_dgnss/
