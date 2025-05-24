@@ -36,20 +36,18 @@ target_compile_definitions(gps_trust_components
   PRIVATE "GPS_TRUST_NODE_BUILDING_DLL"
 )
 
-ament_target_dependencies(gps_trust_components
-  rclcpp
-  rclcpp_components
-  std_msgs
-  ublox_ubx_msgs
-  rtcm_msgs
-  gps_trust_msgs
-  libcurl_vendor
-)
-
 # Link against system libraries
 target_link_libraries(gps_trust_components
   ${JSONCPP_LIBRARIES}
   ${ZLIB_LIBRARIES}
+  ${gps_trust_msgs_TARGETS}
+  ${rtcm_msgs_TARGETS}
+  ${std_msgs_TARGETS}
+  ${ublox_ubx_msgs_TARGETS}
+  CURL::libcurl
+  rclcpp::rclcpp
+  rclcpp_components::component
+  rclcpp_components::component_manager
 )
 
 rclcpp_components_register_node(gps_trust_components
