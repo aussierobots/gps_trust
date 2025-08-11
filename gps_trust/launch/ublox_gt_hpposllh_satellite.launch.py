@@ -29,7 +29,13 @@ def generate_launch_description():
         'CFG_MSGOUT_UBX_RXM_RTCM_USB': '1',
         'CFG_MSGOUT_UBX_RXM_COR_USB': '1',
         'CFG_MSGOUT_UBX_RXM_RAWX_USB': '1',
-        'CFG_MSGOUT_UBX_RXM_MEASX_USB': '1'
+        'CFG_MSGOUT_UBX_RXM_MEASX_USB': '1',
+        'CFG_SIGNAL_BDS_ENA': 'true',
+        'CFG_SIGNAL_GLO_ENA': 'true',
+        'CFG_SIGNAL_GAL_ENA': 'true',
+        'CFG_SIGNAL_GPS_ENA': 'true',
+        'CFG_SIGNAL_SBAS_ENA': 'true',
+        'CFG_SIGNAL_QZSS_ENA': 'true'
     }
 
     # Declare all arguments
