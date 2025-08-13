@@ -8,8 +8,11 @@ from launch.substitutions import LaunchConfiguration, TextSubstitution
 def generate_launch_description():
     """Generate launch description for ublox_dgnss components with launch arguments."""
 
+    device_family = LaunchConfiguration("device_family")
+
     # Define parameter names and default values
     param_defaults = {
+        'DEVICE_FAMILY': 'F9P',
         'CFG_USBOUTPROT_NMEA': 'false',
         'CFG_UART1OUTPROT_UBX': 'false',
         'CFG_UART1OUTPROT_NMEA': 'false',
@@ -35,10 +38,11 @@ def generate_launch_description():
         'CFG_SIGNAL_GAL_ENA': 'true',
         'CFG_SIGNAL_GPS_ENA': 'true',
         'CFG_SIGNAL_SBAS_ENA': 'true',
-        'CFG_SIGNAL_QZSS_ENA': 'true'
+        'CFG_SIGNAL_QZSS_ENA': 'true',
+        'log_level': 'INFO',
     }
 
-    # Declare all arguments
+ # Declare all arguments with TextSubstitution
     declare_args = [
         DeclareLaunchArgument(
             name,
@@ -48,17 +52,10 @@ def generate_launch_description():
         for name, default in param_defaults.items()
     ]
 
-    # Include log_level as a launch argument
-    declare_args.append(
-        DeclareLaunchArgument(
-            "log_level", default_value=TextSubstitution(text="INFO"),
-            description='Logging level'
-        )
-    )
+    # Create runtime substitution dictionary for parameters
+    runtime_params = [{key: LaunchConfiguration(key)} for key in param_defaults.keys()]
 
-    # Rebuild parameter list using LaunchConfiguration
-    params = [{key: LaunchConfiguration(key)} for key in param_defaults.keys()]
-
+    # Define the composable node container
     container1 = ComposableNodeContainer(
         name='ublox_dgnss_container',
         namespace='',
@@ -70,7 +67,7 @@ def generate_launch_description():
                 package='ublox_dgnss_node',
                 plugin='ublox_dgnss::UbloxDGNSSNode',
                 name='ublox_dgnss',
-                parameters=params
+                parameters=runtime_params
             )
         ]
     )
