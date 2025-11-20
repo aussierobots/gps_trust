@@ -33,6 +33,7 @@
 #include "ublox_ubx_msgs/msg/ubx_nav_orb.hpp"
 #include "ublox_ubx_msgs/msg/ubx_nav_sat.hpp"
 #include "ublox_ubx_msgs/msg/ubx_sec_sig.hpp"
+#include "ublox_ubx_msgs/msg/ubx_rxm_rawx.hpp"
 #include "rtcm_msgs/msg/message.hpp"
 #include "gps_trust_node/visibility_control.h"
 #include "gps_trust_node/node_params.hpp"
@@ -84,6 +85,11 @@ public:
     nav_sat_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXNavSat>(
       "/ubx_nav_sat", qos,
       std::bind(&GPSTrustNode::ubx_nav_sat_callback, this, std::placeholders::_1),
+      sub_options);
+
+    rxm_rawx_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXRxmRawx>(
+      "/ubx_rxm_rawx", qos,
+      std::bind(&GPSTrustNode::ubx_rxm_rawx_callback, this, std::placeholders::_1),
       sub_options);
 
     // Publisher
@@ -571,6 +577,13 @@ private:
       nav_sat_json_.reset();
     }
 
+    RCLCPP_DEBUG(get_logger(), "rxm_rawx_json_.use_count(): %ld", rxm_rawx_json_.use_count());
+    if (rxm_rawx_json_.use_count() != 0) {
+      json_request["rxm_rawx"] = *rxm_rawx_json_.get();
+      rxm_rawx_json_.reset();
+    }
+
+    // count how many params need to be actioned
     size_t pcm_len = 0;
     // Iterate through the map
     for (const auto & entry : params_cache_map_) {
@@ -1065,6 +1078,130 @@ void ubx_nav_sat_callback(const ublox_ubx_msgs::msg::UBXNavSat::SharedPtr msg)
 }
 
 GPS_TRUST_NODE_LOCAL
+Json::Value json_from_ubx_rxm_rawx(const ublox_ubx_msgs::msg::UBXRxmRawx::SharedPtr msg)
+{
+  Json::Value json_stamp;
+  json_stamp["sec"] = msg->header.stamp.sec;
+  json_stamp["nanosec"] = msg->header.stamp.nanosec;
+
+  Json::Value rr;
+  rr["timestamp"] = json_stamp;
+  rr["frame_id"] = msg->header.frame_id;
+
+  rr["rcv_tow"] = msg->rcv_tow;
+  rr["week"] = msg->week;
+  rr["leap_s"] = msg->leap_s;
+  rr["num_meas"] = msg->num_meas;
+
+  Json::Value rec_stat;
+  rec_stat["leap_sec"] = msg->rec_stat.leap_sec;
+  rec_stat["clk_rest"] = msg->rec_stat.clk_reset;
+  rr["rec_stat"] = rec_stat;
+
+  rr["version"] = msg->version;
+
+  Json::Value pr_mess;
+  Json::Value cp_mess;
+  Json::Value do_mess;
+  Json::Value gnss_ids;
+  Json::Value sv_ids;
+  Json::Value sig_ids;
+  Json::Value freq_ids;
+  Json::Value locktimes;
+  Json::Value c_nos;
+  Json::Value pr_stdevs;
+  Json::Value cp_stdevs;
+  Json::Value do_stdevs;
+  Json::Value pr_valids;
+  Json::Value cp_valids;
+  Json::Value half_cycs;
+  Json::Value sub_half_cycs;
+
+
+  for (size_t i = 0; i < msg->num_meas; i++) {
+    auto rawx_data = msg->rawx_data[i];
+    pr_mess.append(rawx_data.pr_mes);
+    cp_mess.append(rawx_data.cp_mes);
+    do_mess.append(rawx_data.do_mes);
+    gnss_ids.append(rawx_data.gnss_id);
+    sv_ids.append(rawx_data.sv_id);
+    sig_ids.append(rawx_data.sig_id);
+    freq_ids.append(rawx_data.freq_id);
+    locktimes.append(rawx_data.locktime);
+    c_nos.append(rawx_data.c_no);
+    pr_stdevs.append(rawx_data.pr_stdev);
+    cp_stdevs.append(rawx_data.cp_stdev);
+    do_stdevs.append(rawx_data.do_stdev);
+    pr_valids.append(rawx_data.trk_stat.pr_valid);
+    cp_valids.append(rawx_data.trk_stat.cp_valid);
+    half_cycs.append(rawx_data.trk_stat.half_cyc);
+    sub_half_cycs.append(rawx_data.trk_stat.sub_half_cyc);
+  }
+
+  rr["pr_mess"] = pr_mess;
+  rr["cp_mess"] = cp_mess;
+  rr["do_mess"] = do_mess;
+  rr["gnss_ids"] = gnss_ids;
+  rr["sv_ids"] = sv_ids;
+  rr["sig_ids"] = sig_ids;
+  rr["freq_ids"] = freq_ids;
+  rr["locktimes"] = locktimes;
+  rr["c_nos"] = c_nos;
+  rr["pr_stdevs"] = pr_stdevs;
+  rr["cp_stdevs"] = cp_stdevs;
+  rr["do_stdevs"] = do_stdevs;
+  rr["pr_valids"] = pr_valids;
+  rr["cp_valids"] = cp_valids;
+  rr["half_cycs"] = half_cycs;
+  rr["sub_half_cycs"] = sub_half_cycs;
+
+  return rr;
+}
+
+GPS_TRUST_NODE_LOCAL
+void ubx_rxm_rawx_callback(const ublox_ubx_msgs::msg::UBXRxmRawx::SharedPtr msg)
+{
+  rxm_rawx_json_ = std::make_shared<Json::Value>(json_from_ubx_rxm_rawx(msg));
+
+  auto json = *rxm_rawx_json_.get();
+
+  using std::endl;
+
+  // need to format our own json response here due to the arrayas
+  std::ostringstream oss;
+  oss << "{" << endl;
+  oss << "\t" << std::quoted("frame_id") << " : " << json["frame_id"].toStyledString();
+  oss << "\t" << std::quoted("timestamp") << " : " << json["timestamp"].toStyledString();
+  oss << "\t" << std::quoted("rcv_tow") << " : " << json["rcv_tow"].toStyledString();
+  oss << "\t" << std::quoted("week") << " : " << json["week"].toStyledString();
+  oss << "\t" << std::quoted("leap_s") << " : " << json["leap_s"].toStyledString();
+  oss << "\t" << std::quoted("num_meas") << " : " << json["num_meas"].toStyledString();
+  oss << "\t" << std::quoted("rec_stat") << " : " << json["rec_stat"].toStyledString();
+  oss << "\t" << std::quoted("version") << " : " << json["version"].toStyledString();
+
+  oss << "\t" << flatten_json_array("pr_mess", json["pr_mess"]) << endl;
+  oss << "\t" << flatten_json_array("cp_mess", json["cp_mess"]) << endl;
+  oss << "\t" << flatten_json_array("do_mess", json["do_mess"]) << endl;
+  oss << "\t" << flatten_json_array("gnss_ids", json["gnss_ids"]) << endl;
+  oss << "\t" << flatten_json_array("sv_ids", json["sv_ids"]) << endl;
+  oss << "\t" << flatten_json_array("sig_ids", json["sig_ids"]) << endl;
+  oss << "\t" << flatten_json_array("freq_ids", json["freq_ids"]) << endl;
+  oss << "\t" << flatten_json_array("locktimes", json["locktimes"]) << endl;
+  oss << "\t" << flatten_json_array("c_nos", json["c_nos"]) << endl;
+  oss << "\t" << flatten_json_array("pr_stdevs", json["pr_stdevs"]) << endl;
+  oss << "\t" << flatten_json_array("cp_stdevs", json["cp_stdevs"]) << endl;
+  oss << "\t" << flatten_json_array("do_stdevs", json["do_stdevs"]) << endl;
+  oss << "\t" << flatten_json_array("pr_valids", json["pr_valids"]) << endl;
+  oss << "\t" << flatten_json_array("cp_valids", json["cp_valids"]) << endl;
+  oss << "\t" << flatten_json_array("half_cycs", json["half_cycs"]) << endl;
+  oss << "\t" << flatten_json_array("sub_half_cycs", json["sub_half_cycs"]) << endl;
+
+  oss << "}" << endl;
+
+  RCLCPP_DEBUG(get_logger(), "rxm_rawx_json: %s", oss.str().c_str());
+}
+
+GPS_TRUST_NODE_LOCAL
 std::string compressString(const std::string & str)
 {
   z_stream zs;
@@ -1263,6 +1400,7 @@ rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavHPPosLLH>::SharedPtr nav_llh_sub
 rclcpp::Subscription<ublox_ubx_msgs::msg::UBXSecSig>::SharedPtr sec_sig_sub_;
 rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavOrb>::SharedPtr nav_orb_sub_;
 rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavSat>::SharedPtr nav_sat_sub_;
+rclcpp::Subscription<ublox_ubx_msgs::msg::UBXRxmRawx>::SharedPtr rxm_rawx_sub_;
 
 rclcpp::Publisher<gps_trust_msgs::msg::GPSTrustIndicator>::SharedPtr pub_;
 
@@ -1273,6 +1411,7 @@ std::string device_id_;
 std::shared_ptr<Json::Value> sec_sig_json_;
 std::shared_ptr<Json::Value> nav_orb_json_;
 std::shared_ptr<Json::Value> nav_sat_json_;
+std::shared_ptr<Json::Value> rxm_rawx_json_;
 
 public:
 GPS_TRUST_NODE_LOCAL

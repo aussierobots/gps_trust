@@ -93,4 +93,4 @@ imgui.ini
 *.out
 *.app
 
-ublox_dgnss/
+ublox_dgnss
