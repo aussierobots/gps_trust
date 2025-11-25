@@ -1,0 +1,33 @@
+# config/gpstrust.service
+#
+# Example systemd service for running gps_trust nodes as a dedicated user.
+# Install on the station as: /etc/systemd/system/gpstrust.service
+
+[Unit]
+Description=GPS Trust ROS 2 Stack
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+User=gpstrust
+Group=gpstrust
+
+# systemd will create /run/gpstrust with correct ownership
+RuntimeDirectory=gpstrust
+
+# Shared environment for the service (API key, NTRIP, paths)
+EnvironmentFile=/etc/gpstrust.env
+
+WorkingDirectory=/home/gpstrust/gps_trust
+ExecStart=/home/gpstrust/gps_trust/gpstrust.sh start
+ExecStop=/home/gpstrust/gps_trust/gpstrust.sh stop
+ExecReload=/home/gpstrust/gps_trust/gpstrust.sh restart
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
