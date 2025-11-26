@@ -31,8 +31,13 @@ if [ -f "$GPSTRUST_ENV_FILE" ]; then
 fi
 
 # After sourcing GPSTRUST_ENV_FILE (or letting systemd inject env)
-if [ ! -r "$SETUP_BASH" ]; then
-    echo "ERROR: SETUP_BASH '$SETUP_BASH' not found or not readable" >&2
+if [ ! -r "$UD_SETUP_BASH" ]; then
+    echo "ERROR: UD_SETUP_BASH '$UD_SETUP_BASH' not found or not readable" >&2
+    exit 1
+fi
+
+if [ ! -r "$GT_SETUP_BASH" ]; then
+    echo "ERROR: GT_SETUP_BASH '$GT_SETUP_BASH' not found or not readable" >&2
     exit 1
 fi
 
@@ -49,8 +54,8 @@ NC='\033[0m' # No Color
 : "${ROS2_GT:?ROS2_GT must be set (e.g. /home/gpstrust/gps_trust)}"
 : "${GT_SETUP_BASH:?GT_SETUP_BASH must be set (e.g. /home/gpstrust/gps_trust/install/setup.bash)}"
 
-: "${ROS2_UD:?ROS2_UD must be set (e.g. /home/gpstrust/ublox_dgnss_ws)}"
-: "${UD_SETUP_BASH:?UD_SETUP_BASH must be set (e.g. /home/gpstrust/ublox_dgnss_ws/install/setup.bash)}"
+: "${ROS2_UD:?ROS2_UD must be set (e.g. /home/gpstrust/ublox_dgnss)}"
+: "${UD_SETUP_BASH:?UD_SETUP_BASH must be set (e.g. /home/gpstrust/ublox_dgnss/install/setup.bash)}"
 
 : "${GPS_TRUST_DEVICE_API_KEY:?GPS_TRUST_DEVICE_API_KEY must be set}"
 : "${NTRIP_HOST:?NTRIP_HOST must be set}"
