@@ -14,7 +14,7 @@
 #   NTRIP_HOST, NTRIP_PORT, NTRIP_USERNAME, NTRIP_PASSWORD, MOUNTPOINT, USE_HTTPS
 #   LOG_DIR (optional), PID_DIR (optional)
 
-set -euo pipefail
+set -eo pipefail
 
 # ---------------------------------------------------------------------------
 # Environment / configuration
@@ -27,6 +27,12 @@ if [ -f "$GPSTRUST_ENV_FILE" ]; then
     . "$GPSTRUST_ENV_FILE"
 fi
 
+# After sourcing GPSTRUST_ENV_FILE (or letting systemd inject env)
+if [ ! -r "$SETUP_BASH" ]; then
+    echo "ERROR: SETUP_BASH '$SETUP_BASH' not found or not readable" >&2
+    exit 1
+fi
+
 # Colours for output (harmless in systemd logs, helpful when run interactively)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -35,7 +41,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Required environment variables
-: "${ROS2_WS:?ROS2_WS must be set (e.g. /home/gpstrust/ros2_ws)}"
+: "${ROS2_WS:?ROS2_WS must be set (e.g. /home/gpstrust/gps_trust)}"
+: "${ROS_INSTALL_PREFIX:?ROS_INSTALL_PREFIX must be set (e.g. /opt/ros/rolling)}"
 : "${SETUP_BASH:?SETUP_BASH must be set (e.g. /home/gpstrust/ros2_ws/install/setup.bash)}"
 : "${GPS_TRUST_DEVICE_API_KEY:?GPS_TRUST_DEVICE_API_KEY must be set}"
 : "${NTRIP_HOST:?NTRIP_HOST must be set}"
@@ -44,6 +51,19 @@ NC='\033[0m' # No Color
 : "${NTRIP_PASSWORD:?NTRIP_PASSWORD must be set}"
 : "${NTRIP_MOUNTPOINT:?NTRIP_MOUNTPOINT must be set}"
 : "${USE_HTTPS:?USE_HTTPS must be set to true/false}"
+
+
+ROS_DISTRO_SETUP="${ROS_DISTRO_SETUP:-$ROS_INSTALL_PREFIX/setup.bash}"
+
+if [ ! -r "$ROS_DISTRO_SETUP" ]; then
+    echo "ERROR: ROS base setup '$ROS_DISTRO_SETUP' not found or not readable" >&2
+    exit 1
+fi
+
+if [ ! -r "$SETUP_BASH" ]; then
+    echo "ERROR: workspace setup '$SETUP_BASH' not found or not readable" >&2
+    exit 1
+fi
 
 # Optional, with sensible defaults for service usage
 LOG_DIR="${LOG_DIR:-/var/log/gpstrust}"
@@ -88,6 +108,7 @@ start_component() {
     (
         # Run under ROS 2 environment
         # shellcheck disable=SC1090
+        set +u
         source "$SETUP_BASH"
         eval "$cmd" > "$log_file" 2>&1
     ) &
@@ -243,6 +264,7 @@ show_status() {
     fi
 
     echo -e "\n${BLUE}ROS2 Nodes:${NC}"
+    set +u
     if source "$SETUP_BASH" 2>/dev/null; then
         local nodes
         nodes="$(ros2 node list 2>/dev/null | grep -E 'ublox|ntrip|gps_trust' | wc -l || echo 0)"
@@ -260,6 +282,7 @@ show_status() {
     fi
 
     echo -e "\n${BLUE}GPS Topics:${NC}"
+    set +u
     if source "$SETUP_BASH" 2>/dev/null; then
         local topics
         topics="$(ros2 topic list 2>/dev/null | grep -E 'gps|rtcm|ubx_nav' | wc -l || echo 0)"
