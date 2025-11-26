@@ -131,7 +131,7 @@ start_component() {
     echo "$pid" > "$pid_file"
 
     # Give it a moment to start
-    sleep 2
+    sleep 1
 
     if is_running "$pid_file"; then
         echo -e "${GREEN}✓ ${name} started successfully (PID: $pid)${NC}"
@@ -185,11 +185,11 @@ start_gps() {
     # The gps_trust satellite launch already includes the ublox driver
     start_component "gps_trust_satellite" \
         "ros2 launch gps_trust ublox_gt_hpposllh_satellite.launch.py"
-    sleep 5
+    sleep 1
 
     start_component "ntrip_client" \
         "ros2 launch ublox_dgnss ntrip_client.launch.py use_https:=$USE_HTTPS host:=$NTRIP_HOST port:=$NTRIP_PORT username:=$NTRIP_USERNAME password:=$NTRIP_PASSWORD mountpoint:=$NTRIP_MOUNTPOINT"
-    sleep 3
+    sleep 1
 
     start_component "gps_trust_main" \
         "ros2 launch gps_trust gps_trust.launch.py GPS_TRUST_DEVICE_API_KEY:=$GPS_TRUST_DEVICE_API_KEY"
@@ -197,7 +197,7 @@ start_gps() {
     echo -e "\n${GREEN}GPS Trust System startup complete${NC}"
 
     # Quick status check
-    sleep 3
+    sleep 1
     echo -e "\n${BLUE}Verifying components...${NC}"
     show_status
 }
