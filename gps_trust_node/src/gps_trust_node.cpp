@@ -624,7 +624,7 @@ private:
     // Call API and get the response
     Json::Value data;
     data["data"] = json_request;
-    RCLCPP_INFO(
+    RCLCPP_DEBUG(
       get_logger(), "json data: %s",
       Json::writeString(builder, data).c_str());
     Json::Value json_response = callAPI(data, false);
@@ -643,7 +643,7 @@ private:
       pub_->publish(gps_trust_msg);
 
     } else {
-      RCLCPP_INFO(
+      RCLCPP_DEBUG(
         get_logger(), "json_response: %s",
         Json::writeString(builder, json_response).c_str());
 
