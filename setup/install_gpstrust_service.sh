@@ -404,8 +404,12 @@ EnvironmentFile=/etc/gpstrust.env
 
 WorkingDirectory=$SERVICE_REPO_DIR
 ExecStart=$SERVICE_REPO_DIR/scripts/gpstrust.sh start
+ExecStartPost=$SERVICE_REPO_DIR/scripts/gpstrust.sh status
 ExecStop=$SERVICE_REPO_DIR/scripts/gpstrust.sh stop
 ExecReload=$SERVICE_REPO_DIR/scripts/gpstrust.sh restart
+
+Restart=on-failure
+RestartSec=5
 
 StandardOutput=journal
 StandardError=journal
