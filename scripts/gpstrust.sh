@@ -109,7 +109,21 @@ start_component() {
         # Run under ROS 2 environment
         # shellcheck disable=SC1090
         set +u
-        source "$SETUP_BASH"
+        # Source system-wide ROS 2 installation
+        if [ -r "$ROS_INSTALL_PREFIX/setup.bash" ]; then
+            source "$ROS_INSTALL_PREFIX/setup.bash"
+        else
+            echo "WARNING: ROS base env not found at $ROS_INSTALL_PREFIX/setup.bash" >&2
+        fi
+
+        # Source workspace overlay (installs packages built with colcon)
+        if [ -r "$SETUP_BASH" ]; then
+            source "$SETUP_BASH"
+        else
+            echo "WARNING: Workspace setup not found at $SETUP_BASH" >&2
+        fi
+
+        # Execute the launch command
         eval "$cmd" > "$log_file" 2>&1
     ) &
 
