@@ -10,8 +10,11 @@
 #
 # Configuration is loaded from an environment file (default: /etc/gpstrust.env)
 # which should define at least:
-#   ROS2_WS, SETUP_BASH, API_KEY,
-#   NTRIP_HOST, NTRIP_PORT, NTRIP_USERNAME, NTRIP_PASSWORD, MOUNTPOINT, USE_HTTPS
+#   ROS_INSTALL_PREFIX
+#   ROS2_GT,  GT_SETUP_BASH    # gps_trust workspace and setup
+#   ROS2_UD,  UD_SETUP_BASH    # ublox_dgnss workspace and setup
+#   GPS_TRUST_DEVICE_API_KEY
+#   NTRIP_HOST, NTRIP_PORT, NTRIP_USERNAME, NTRIP_PASSWORD, NTRIP_MOUNTPOINT, USE_HTTPS
 #   LOG_DIR (optional), PID_DIR (optional)
 
 set -eo pipefail
@@ -41,9 +44,14 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Required environment variables
-: "${ROS2_WS:?ROS2_WS must be set (e.g. /home/gpstrust/gps_trust)}"
 : "${ROS_INSTALL_PREFIX:?ROS_INSTALL_PREFIX must be set (e.g. /opt/ros/rolling)}"
-: "${SETUP_BASH:?SETUP_BASH must be set (e.g. /home/gpstrust/ros2_ws/install/setup.bash)}"
+
+: "${ROS2_GT:?ROS2_GT must be set (e.g. /home/gpstrust/gps_trust)}"
+: "${GT_SETUP_BASH:?GT_SETUP_BASH must be set (e.g. /home/gpstrust/gps_trust/install/setup.bash)}"
+
+: "${ROS2_UD:?ROS2_UD must be set (e.g. /home/gpstrust/ublox_dgnss_ws)}"
+: "${UD_SETUP_BASH:?UD_SETUP_BASH must be set (e.g. /home/gpstrust/ublox_dgnss_ws/install/setup.bash)}"
+
 : "${GPS_TRUST_DEVICE_API_KEY:?GPS_TRUST_DEVICE_API_KEY must be set}"
 : "${NTRIP_HOST:?NTRIP_HOST must be set}"
 : "${NTRIP_PORT:?NTRIP_PORT must be set}"
@@ -52,7 +60,6 @@ NC='\033[0m' # No Color
 : "${NTRIP_MOUNTPOINT:?NTRIP_MOUNTPOINT must be set}"
 : "${USE_HTTPS:?USE_HTTPS must be set to true/false}"
 
-
 ROS_DISTRO_SETUP="${ROS_DISTRO_SETUP:-$ROS_INSTALL_PREFIX/setup.bash}"
 
 if [ ! -r "$ROS_DISTRO_SETUP" ]; then
@@ -60,8 +67,13 @@ if [ ! -r "$ROS_DISTRO_SETUP" ]; then
     exit 1
 fi
 
-if [ ! -r "$SETUP_BASH" ]; then
-    echo "ERROR: workspace setup '$SETUP_BASH' not found or not readable" >&2
+if [ ! -r "$UD_SETUP_BASH" ]; then
+    echo "ERROR: ublox_dgnss workspace setup '$UD_SETUP_BASH' not found or not readable" >&2
+    exit 1
+fi
+
+if [ ! -r "$GT_SETUP_BASH" ]; then
+    echo "ERROR: gps_trust workspace setup '$GT_SETUP_BASH' not found or not readable" >&2
     exit 1
 fi
 
@@ -109,18 +121,26 @@ start_component() {
         # Run under ROS 2 environment
         # shellcheck disable=SC1090
         set +u
-        # Source system-wide ROS 2 installation
-        if [ -r "$ROS_INSTALL_PREFIX/setup.bash" ]; then
-            source "$ROS_INSTALL_PREFIX/setup.bash"
+
+        # 1) Base ROS distro
+        if [ -r "$ROS_DISTRO_SETUP" ]; then
+            source "$ROS_DISTRO_SETUP"
         else
-            echo "WARNING: ROS base env not found at $ROS_INSTALL_PREFIX/setup.bash" >&2
+            echo "WARNING: ROS base env not found at $ROS_DISTRO_SETUP" >&2
         fi
 
-        # Source workspace overlay (installs packages built with colcon)
-        if [ -r "$SETUP_BASH" ]; then
-            source "$SETUP_BASH"
+        # 2) ublox_dgnss workspace
+        if [ -r "$UD_SETUP_BASH" ]; then
+            source "$UD_SETUP_BASH"
         else
-            echo "WARNING: Workspace setup not found at $SETUP_BASH" >&2
+            echo "WARNING: ublox_dgnss workspace setup not found at $UD_SETUP_BASH" >&2
+        fi
+
+        # 3) gps_trust workspace
+        if [ -r "$GT_SETUP_BASH" ]; then
+            source "$GT_SETUP_BASH"
+        else
+            echo "WARNING: gps_trust workspace setup not found at $GT_SETUP_BASH" >&2
         fi
 
         # Execute the launch command
@@ -279,7 +299,12 @@ show_status() {
 
     echo -e "\n${BLUE}ROS2 Nodes:${NC}"
     set +u
-    if source "$SETUP_BASH" 2>/dev/null; then
+    if {
+        [ -r "$ROS_DISTRO_SETUP" ] && source "$ROS_DISTRO_SETUP"
+    } 2>/dev/null; then
+        [ -r "$UD_SETUP_BASH" ] && source "$UD_SETUP_BASH" 2>/dev/null || true
+        [ -r "$GT_SETUP_BASH" ] && source "$GT_SETUP_BASH" 2>/dev/null || true
+
         local nodes
         nodes="$(ros2 node list 2>/dev/null | grep -E 'ublox|ntrip|gps_trust' | wc -l || echo 0)"
         if [ "$nodes" -gt 0 ]; then
@@ -297,7 +322,12 @@ show_status() {
 
     echo -e "\n${BLUE}GPS Topics:${NC}"
     set +u
-    if source "$SETUP_BASH" 2>/dev/null; then
+    if {
+        [ -r "$ROS_DISTRO_SETUP" ] && source "$ROS_DISTRO_SETUP"
+    } 2>/dev/null; then
+        [ -r "$UD_SETUP_BASH" ] && source "$UD_SETUP_BASH" 2>/dev/null || true
+        [ -r "$GT_SETUP_BASH" ] && source "$GT_SETUP_BASH" 2>/dev/null || true
+
         local topics
         topics="$(ros2 topic list 2>/dev/null | grep -E 'gps|rtcm|ubx_nav' | wc -l || echo 0)"
         if [ "$topics" -gt 0 ]; then
@@ -378,7 +408,8 @@ show_usage() {
     echo "  restart - Restart all GPS components"
     echo
     echo "Environment is loaded from: ${GPSTRUST_ENV_FILE}"
-    echo "  ROS2_WS:        $ROS2_WS"
+    echo "  ROS2_GT:        $ROS2_GT"
+    echo "  ROS2_UD:        $ROS2_UD"
     echo "  NTRIP Host:     $NTRIP_HOST:$NTRIP_PORT"
     echo "  NTRIP Mount:    $NTRIP_MOUNTPOINT"
     echo "  Log Directory:  $LOG_DIR"

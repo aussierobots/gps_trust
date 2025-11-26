@@ -86,23 +86,66 @@ SERVICE_HOME="$(getent passwd "$SERVICE_USER" | cut -d: -f6)"
 ROS_INSTALL_PREFIX_DEFAULT="${ROS_INSTALL_PREFIX:-/opt/ros/rolling}"
 ROS_INSTALL_PREFIX="$(prompt_default 'ROS install prefix (ROS_INSTALL_PREFIX)' "$ROS_INSTALL_PREFIX_DEFAULT")"
 
-# You want ROS2_WS to default to /home/gpstrust/gps_trust
-DEFAULT_WS="${ROS2_WS:-$SERVICE_HOME/gps_trust}"
-ROS2_WS="$(prompt_default 'ROS 2 workspace path (ROS2_WS)' "$DEFAULT_WS")"
+# gps_trust workspace (GT)
+ROS2_GT_DEFAULT="${ROS2_GT:-$SERVICE_HOME/gps_trust}"
+ROS2_GT="$(prompt_default 'gps_trust workspace path (ROS2_GT)' "$ROS2_GT_DEFAULT")"
 
-# SETUP_BASH: default from env if set, otherwise standard install path
-DEFAULT_SETUP_BASH="${SETUP_BASH:-$ROS2_WS/install/setup.bash}"
-SETUP_BASH="$(prompt_default 'Path to ROS 2 setup.bash (SETUP_BASH)' "$DEFAULT_SETUP_BASH")"
+GT_SETUP_BASH_DEFAULT="${GT_SETUP_BASH:-$ROS2_GT/install/setup.bash}"
+GT_SETUP_BASH="$(prompt_default 'gps_trust setup.bash (GT_SETUP_BASH)' "$GT_SETUP_BASH_DEFAULT")"
 
-# Repo directory: default to ROS2_WS, but allow override via GPSTRUST_REPO_DIR env
-DEFAULT_REPO_DIR="${GPSTRUST_REPO_DIR:-$ROS2_WS}"
-SERVICE_REPO_DIR="$(prompt_default 'gps_trust repo path for service user' "$DEFAULT_REPO_DIR")"
+# ublox_dgnss workspace (UD)
+ROS2_UD_DEFAULT="${ROS2_UD:-$SERVICE_HOME/ublox_dgnss}"
+ROS2_UD="$(prompt_default 'ublox_dgnss workspace path (ROS2_UD)' "$ROS2_UD_DEFAULT")"
+
+SERVICE_UD_REPO_DIR="$(prompt_default 'ublox_dgnss repo path for service user' "$ROS2_UD")"
+
+UD_SETUP_BASH_DEFAULT="${UD_SETUP_BASH:-$ROS2_UD/install/setup.bash}"
+UD_SETUP_BASH="$(prompt_default 'ublox_dgnss setup.bash (UD_SETUP_BASH)' "$UD_SETUP_BASH_DEFAULT")"
+
+# gps_trust repo dir (within GT workspace)
+SERVICE_REPO_DIR="$(prompt_default 'gps_trust repo path for service user' "$ROS2_GT")"
+
+
 
 echo
 echo "Service user home:       $SERVICE_HOME"
-echo "ROS 2 workspace (WS):    $ROS2_WS"
+echo "ublox_dgnss repo path:   $SERVICE_UD_REPO_DIR"
 echo "gps_trust repo path:     $SERVICE_REPO_DIR"
 echo
+
+# --- Repo management: ublox_dgnss git clone / git pull ----------------------
+
+UD_GIT_URL_DEFAULT="${UBLOX_DGNSS_GIT_URL:-https://github.com/aussierobots/ublox_dgnss.git}"
+UD_GIT_URL="$(prompt_default 'Git URL for ublox_dgnss repo' "$UD_GIT_URL_DEFAULT")"
+
+# Ensure src directory exists
+mkdir -p "$(dirname "$SERVICE_UD_REPO_DIR")"
+
+if [ ! -d "$SERVICE_UD_REPO_DIR/.git" ]; then
+    echo "No ublox_dgnss git repository found at '$SERVICE_UD_REPO_DIR'."
+    echo "Cloning $UD_GIT_URL into '$SERVICE_UD_REPO_DIR' as $SERVICE_USER..."
+    sudo -u "$SERVICE_USER" git clone "$UD_GIT_URL" "$SERVICE_UD_REPO_DIR"
+else
+    echo "Existing ublox_dgnss git repo detected at '$SERVICE_UD_REPO_DIR'."
+    read -r -p "Run 'git pull' in ublox_dgnss repo as $SERVICE_USER? [Y/n]: " UD_PULL_CHOICE
+    if [[ ! "$UD_PULL_CHOICE" =~ ^[Nn]$ ]]; then
+        sudo -u "$SERVICE_USER" bash -lc "
+          cd '$SERVICE_UD_REPO_DIR'
+          if ! git diff --quiet --ignore-submodules HEAD; then
+              echo '⚠ Local changes detected in ublox_dgnss — resetting to origin/main to avoid merge errors.'
+              git fetch origin main
+              git reset --hard origin/main
+          else
+              git pull --ff-only
+          fi
+        "
+    else
+        echo "Skipping git pull for ublox_dgnss; using existing checkout."
+    fi
+fi
+
+# Ensure ownership
+chown -R "$SERVICE_USER:$SERVICE_USER" "$SERVICE_UD_REPO_DIR" || true
 
 # --- Repo management: git clone / git pull ---------------------------------
 
@@ -154,33 +197,60 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$SERVICE_REPO_DIR" || true
 # --- Build the workspace (colcon) -----------------------------------------
 
 echo
-echo "Running colcon build in '$ROS2_WS' as $SERVICE_USER..."
+echo "Running colcon build for ublox_dgnss in '$ROS2_UD' as $SERVICE_USER..."
 
-# We assume ROS_INSTALL_PREFIX points to your base install, e.g. /opt/ros/rolling
 sudo -u "$SERVICE_USER" bash -lc "
-  # Some shells enable 'set -u' in profile; disable it before sourcing ROS/colcon setup
-  set +u
-
   if [ -r '$ROS_INSTALL_PREFIX/setup.bash' ]; then
-      # shellcheck disable=SC1090
       source '$ROS_INSTALL_PREFIX/setup.bash'
   else
-      echo 'WARNING: ROS base setup $ROS_INSTALL_PREFIX/setup.bash not found; proceeding without sourcing it.' >&2
+      echo 'WARNING: ROS base setup $ROS_INSTALL_PREFIX/setup.bash not found; proceeding without it.' >&2
   fi
 
-  cd '$ROS2_WS' && colcon build --symlink-install
+  mkdir -p '$ROS2_UD/src'
+  cd '$ROS2_UD'
+  colcon build --symlink-install
 "
 
 echo
-echo "Checking for workspace setup file: $SETUP_BASH"
+echo "Checking for workspace setup files..."
 
-if [ ! -r "$SETUP_BASH" ]; then
-    echo "ERROR: Expected workspace setup '$SETUP_BASH' not found or not readable after colcon build." >&2
-    echo "       Check that ROS2_WS ('$ROS2_WS') is correct and that colcon build succeeded." >&2
+if [ ! -r "$UD_SETUP_BASH" ]; then
+    echo "ERROR: Expected ublox_dgnss workspace setup '$UD_SETUP_BASH' not found." >&2
     exit 1
 fi
 
-echo "Workspace setup file found."
+echo
+echo "Running colcon build for gps_trust in '$ROS2_GT' as $SERVICE_USER..."
+
+sudo -u "$SERVICE_USER" bash -lc "
+  if [ -r '$ROS_INSTALL_PREFIX/setup.bash' ]; then
+      source '$ROS_INSTALL_PREFIX/setup.bash'
+  else
+      echo 'WARNING: ROS base setup $ROS_INSTALL_PREFIX/setup.bash not found; proceeding without it.' >&2
+  fi
+
+  if [ -r '$UD_SETUP_BASH' ]; then
+      source '$UD_SETUP_BASH'
+  else
+      echo 'WARNING: ublox_dgnss workspace setup $UD_SETUP_BASH not found; proceeding without it.' >&2
+  fi
+
+  cd '$ROS2_GT'
+  colcon build --symlink-install
+"
+
+echo
+echo "Checking for workspace setup files..."
+
+if [ ! -r "$UD_SETUP_BASH" ]; then
+    echo "ERROR: Expected ublox_dgnss workspace setup '$UD_SETUP_BASH' not found." >&2
+    exit 1
+fi
+
+if [ ! -r "$GT_SETUP_BASH" ]; then
+    echo "ERROR: Expected gps_trust workspace setup '$GT_SETUP_BASH' not found." >&2
+    exit 1
+fi
 
 # Ensure gpstrust.sh is executable (we assume scripts/gpstrust.sh in the repo)
 if [ -f "$SERVICE_REPO_DIR/scripts/gpstrust.sh" ]; then
@@ -251,10 +321,15 @@ echo "Writing environment file to $ENV_FILE..."
 cat > "$ENV_FILE" <<EOF
 # Autogenerated by install_gpstrust_service.sh
 
+ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+
 ROS_INSTALL_PREFIX="$ROS_INSTALL_PREFIX"
 
-ROS2_WS="$ROS2_WS"
-SETUP_BASH="$SETUP_BASH"
+ROS2_GT="$ROS2_GT"
+GT_SETUP_BASH="$GT_SETUP_BASH"
+
+ROS2_UD="$ROS2_UD"
+UD_SETUP_BASH="$UD_SETUP_BASH"
 
 GPS_TRUST_DEVICE_API_KEY="$GPS_TRUST_DEVICE_API_KEY"
 
