@@ -133,7 +133,16 @@ else
     echo "Existing git repo detected at '$SERVICE_REPO_DIR'."
     read -r -p "Run 'git pull' in that repo as $SERVICE_USER? [Y/n]: " PULL_CHOICE
     if [[ ! "$PULL_CHOICE" =~ ^[Nn]$ ]]; then
-        sudo -u "$SERVICE_USER" bash -lc "cd '$SERVICE_REPO_DIR' && git pull --ff-only || git status"
+        sudo -u "$SERVICE_USER" bash -lc "
+          cd '$SERVICE_REPO_DIR'
+          if ! git diff --quiet --ignore-submodules HEAD; then
+              echo '⚠ Local changes detected — resetting to origin/main to avoid merge errors.'
+              git fetch origin main
+              git reset --hard origin/main
+          else
+              git pull --ff-only
+          fi
+        "
     else
         echo "Skipping git pull; using existing checkout."
     fi
