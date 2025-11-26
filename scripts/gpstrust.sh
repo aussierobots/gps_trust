@@ -64,6 +64,7 @@ NC='\033[0m' # No Color
 : "${NTRIP_PASSWORD:?NTRIP_PASSWORD must be set}"
 : "${NTRIP_MOUNTPOINT:?NTRIP_MOUNTPOINT must be set}"
 : "${USE_HTTPS:?USE_HTTPS must be set to true/false}"
+: "${GPS_TRUST_DEVICE_TYPE:=F9P}"
 
 ROS_DISTRO_SETUP="${ROS_DISTRO_SETUP:-$ROS_INSTALL_PREFIX/setup.bash}"
 
@@ -81,6 +82,20 @@ if [ ! -r "$GT_SETUP_BASH" ]; then
     echo "ERROR: gps_trust workspace setup '$GT_SETUP_BASH' not found or not readable" >&2
     exit 1
 fi
+
+# Select satellite launch file based on device family
+case "${GPS_TRUST_DEVICE_TYPE^^}" in
+    X20P)
+        SAT_LAUNCH_FILE="ublox_gt_hpposllh_satellite_x20p.launch.py"
+        ;;
+    F9P|"")
+        SAT_LAUNCH_FILE="ublox_gt_hpposllh_satellite.launch.py"
+        ;;
+    *)
+        echo "WARNING: unknown GPS_TRUST_DEVICE_TYPE='$GPS_TRUST_DEVICE_TYPE', defaulting to F9P launch file" >&2
+        SAT_LAUNCH_FILE="ublox_gt_hpposllh_satellite.launch.py"
+        ;;
+esac
 
 # Optional, with sensible defaults for service usage
 LOG_DIR="${LOG_DIR:-/var/log/gpstrust}"
@@ -209,7 +224,7 @@ start_gps() {
 
     # The gps_trust satellite launch already includes the ublox driver
     start_component "gps_trust_satellite" \
-        "ros2 launch gps_trust ublox_gt_hpposllh_satellite.launch.py"
+        "ros2 launch gps_trust ${SAT_LAUNCH_FILE}"
     sleep 1
 
     start_component "ntrip_client" \
