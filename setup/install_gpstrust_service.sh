@@ -321,9 +321,11 @@ GPS_TRUST_DEVICE_TYPE="$(echo "$GPS_TRUST_DEVICE_TYPE" | tr '[:lower:]' '[:upper
 # Log and PID dirs: default from env if set, otherwise standard locations
 LOG_DIR_DEFAULT="${LOG_DIR:-/var/log/gpstrust}"
 PID_DIR_DEFAULT="${PID_DIR:-/run/gpstrust}"
+LOG_RETENTION_DAYS_DEFAULT="${LOG_RETENTION_DAYS:-7}"
 
 LOG_DIR="$(prompt_default 'Log directory (LOG_DIR)' "$LOG_DIR_DEFAULT")"
 PID_DIR="$(prompt_default 'PID directory (PID_DIR)' "$PID_DIR_DEFAULT")"
+LOG_RETENTION_DAYS="$(prompt_default 'Log retention days (LOG_RETENTION_DAYS)' "$LOG_RETENTION_DAYS_DEFAULT")"
 
 # --- Write /etc/gpstrust.env ----------------------------------------------
 
@@ -356,6 +358,7 @@ USE_HTTPS="$USE_HTTPS"
 
 LOG_DIR="$LOG_DIR"
 PID_DIR="$PID_DIR"
+LOG_RETENTION_DAYS="$LOG_RETENTION_DAYS"
 EOF
 
 chown root:"$SERVICE_USER" "$ENV_FILE"
@@ -378,6 +381,42 @@ chown "$SERVICE_USER:$SERVICE_USER" "$PID_DIR" || true
 
 echo "Log dir: $LOG_DIR"
 echo "PID dir: $PID_DIR"
+
+echo
+echo "Installing gpstrust log cleanup script..."
+
+CLEANUP_SCRIPT="/usr/local/sbin/gpstrust-log-cleanup.sh"
+
+cat > "$CLEANUP_SCRIPT" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -r /etc/gpstrust.env ]; then
+  # shellcheck disable=SC1091
+  . /etc/gpstrust.env
+fi
+
+LOG_DIR="${LOG_DIR:-/var/log/gpstrust}"
+LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-7}"
+
+find "$LOG_DIR" -maxdepth 1 -type f -name "*.log" -mtime +"$LOG_RETENTION_DAYS" -delete
+EOF
+
+chmod 755 "$CLEANUP_SCRIPT"
+echo "Cleanup script installed at $CLEANUP_SCRIPT"
+
+echo
+echo "Installing daily cron job for gpstrust log cleanup..."
+
+CRON_FILE="/etc/cron.daily/gpstrust-log-cleanup"
+
+cat > "$CRON_FILE" <<EOF
+#!/bin/sh
+/usr/local/sbin/gpstrust-log-cleanup.sh
+EOF
+
+chmod 755 "$CRON_FILE"
+echo "Cron job installed at $CRON_FILE"
 
 # --- Write systemd service --------------------------------------------------
 
