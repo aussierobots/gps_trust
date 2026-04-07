@@ -157,7 +157,7 @@ public:
         &GPSTrustNode::on_parameter_event_callback,
         this, _1));
 
-    while (!ntrip_parameters_client_->wait_for_service(1s) &&
+    while (!ntrip_parameters_client_->wait_for_service(1s) ||
       !ublox_parameters_client_->wait_for_service(1s))
     {
       if (!rclcpp::ok()) {
