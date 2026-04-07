@@ -678,14 +678,37 @@ private:
             action_json["ntypes"].isArray();
           const auto & ntypes = action_json["ntypes"];
 
+          const std::string ntrip_prefix = "NtripClient_";
+          const std::string ubx_prefix = "UbxCfg_";
+
           // Process the action data here
           for (Json::Value::ArrayIndex i = 0; i < names.size(); i++) {
             auto name = names[i].asString();
             auto value = values[i].asString();
             auto ptype = ptypes[i].asUInt();
-            NodeParamType node_type = (has_ntypes && i < ntypes.size())
-              ? static_cast<NodeParamType>(ntypes[i].asUInt())
-              : NodeParamType::NPT_UBX_CFG;
+
+            // Resolve node_type: prefer explicit ntypes, fall back to prefix detection
+            NodeParamType node_type;
+            if (has_ntypes && i < ntypes.size()) {
+              node_type = static_cast<NodeParamType>(ntypes[i].asUInt());
+            } else if (name.compare(0, ntrip_prefix.size(), ntrip_prefix) == 0) {
+              node_type = NodeParamType::NPT_NTRIP_CLIENT;
+            } else if (name.compare(0, ubx_prefix.size(), ubx_prefix) == 0) {
+              node_type = NodeParamType::NPT_UBX_CFG;
+            } else {
+              RCLCPP_ERROR(
+                get_logger(),
+                "Action param '%s': no ntypes provided and name has no known prefix - skipping",
+                name.c_str());
+              continue;
+            }
+
+            // Strip prefix to get raw ROS2 parameter name for cache lookup and set_parameters
+            if (name.compare(0, ntrip_prefix.size(), ntrip_prefix) == 0) {
+              name = name.substr(ntrip_prefix.size());
+            } else if (name.compare(0, ubx_prefix.size(), ubx_prefix) == 0) {
+              name = name.substr(ubx_prefix.size());
+            }
 
             RCLCPP_INFO(
               get_logger(), "Action param [%s]: %s = %s (type: %d)",
