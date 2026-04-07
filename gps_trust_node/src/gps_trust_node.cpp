@@ -678,31 +678,38 @@ private:
           const auto & names = action_json["names"];
           const auto & values = action_json["values"];
           const auto & ptypes = action_json["ptypes"];
+          bool has_ntypes = action_json.isMember("ntypes") &&
+            action_json["ntypes"].isArray();
+          const auto & ntypes = action_json["ntypes"];
 
           // Process the action data here
           for (Json::Value::ArrayIndex i = 0; i < names.size(); i++) {
             auto name = names[i].asString();
             auto value = values[i].asString();
             auto ptype = ptypes[i].asUInt();
+            NodeParamType node_type = (has_ntypes && i < ntypes.size())
+              ? static_cast<NodeParamType>(ntypes[i].asUInt())
+              : NodeParamType::NPT_UBX_CFG;
 
             RCLCPP_INFO(
-              get_logger(), "Action param: %s = %s (type: %d)",
+              get_logger(), "Action param [%s]: %s = %s (type: %d)",
+              param_type_to_string(node_type).c_str(),
               name.c_str(),
               value.c_str(),
               ptype);
-            // Add your action processing logic here
 
-            if (!param_cache_helper_->check_param_in_cache(name, NodeParamType::NPT_UBX_CFG)) {
+            if (!param_cache_helper_->check_param_in_cache(name, node_type)) {
               RCLCPP_WARN(
-                get_logger(), "Action name: %s not in param_cache .. doing nothing!",
-                name.c_str());
+                get_logger(), "Action name: %s not in param_cache for %s .. doing nothing!",
+                name.c_str(),
+                param_type_to_string(node_type).c_str());
 
             } else {
-              param_cache_helper_->update_param_notification(name, NPT_UBX_CFG, NOTI_NODE_UPDATE);
+              param_cache_helper_->update_param_notification(name, node_type, NOTI_NODE_UPDATE);
 
               auto param_optional = param_cache_helper_->get_param_from_cache(
                 name,
-                NodeParamType::NPT_UBX_CFG);
+                node_type);
               if (param_optional) {
                 auto param = *param_optional;
                 std::vector<rclcpp::Parameter> parameters;
@@ -772,7 +779,10 @@ private:
                     }
                   };
 
-                  ublox_parameters_client_->set_parameters(parameters, callback);
+                  auto & target_client = (node_type == NPT_NTRIP_CLIENT)
+                    ? ntrip_parameters_client_
+                    : ublox_parameters_client_;
+                  target_client->set_parameters(parameters, callback);
 
                 } catch (const std::exception & e) {
                   RCLCPP_ERROR(
