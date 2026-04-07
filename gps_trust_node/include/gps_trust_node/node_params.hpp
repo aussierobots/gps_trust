@@ -204,6 +204,23 @@ public:
     return it->second;
   }
 
+  // Find param by name only (ignoring node_type), update notification, return state + resolved type
+  std::optional<param_state_t> find_by_name_and_update(
+    const std::string & param_name,
+    ParamNotify noti,
+    NodeParamType & resolved_node_type)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto & entry : params_cache_map_) {
+      if (entry.first.name == param_name) {
+        entry.second.noti = noti;
+        resolved_node_type = entry.first.node_type;
+        return entry.second;
+      }
+    }
+    return std::nullopt;
+  }
+
 private:
   rclcpp::Logger logger_;
   std::mutex & mutex_;

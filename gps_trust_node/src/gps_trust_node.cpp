@@ -696,11 +696,19 @@ private:
             } else if (name.compare(0, ubx_prefix.size(), ubx_prefix) == 0) {
               node_type = NodeParamType::NPT_UBX_CFG;
             } else {
-              RCLCPP_ERROR(
-                get_logger(),
-                "Action param '%s': no ntypes provided and name has no known prefix - skipping",
-                name.c_str());
-              continue;
+              // No ntypes and no known prefix — try cache lookup by raw name
+              NodeParamType resolved_type;
+              auto found = param_cache_helper_->find_by_name_and_update(
+                name, NOTI_NODE_UPDATE, resolved_type);
+              if (found) {
+                node_type = resolved_type;
+              } else {
+                RCLCPP_ERROR(
+                  get_logger(),
+                  "Action param '%s': no ntypes, no known prefix, not in cache - skipping",
+                  name.c_str());
+                continue;
+              }
             }
 
             // Strip prefix to get raw ROS2 parameter name for cache lookup and set_parameters
