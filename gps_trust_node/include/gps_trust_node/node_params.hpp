@@ -188,6 +188,22 @@ public:
     return true;
   }
 
+  // Atomically check existence, update notification, and return param state
+  std::optional<param_state_t> check_update_and_get(
+    const std::string & param_name,
+    NodeParamType node_type,
+    ParamNotify noti)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    param_key_t key{param_name, node_type};
+    auto it = params_cache_map_.find(key);
+    if (it == params_cache_map_.end()) {
+      return std::nullopt;
+    }
+    it->second.noti = noti;
+    return it->second;
+  }
+
 private:
   rclcpp::Logger logger_;
   std::mutex & mutex_;

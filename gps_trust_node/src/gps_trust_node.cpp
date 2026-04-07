@@ -311,6 +311,7 @@ private:
   GPS_TRUST_NODE_LOCAL
   std::string get_params_cache_output()
   {
+    std::lock_guard<std::mutex> lock(params_cache_mutex_);
     std::stringstream ss;
     ss << std::endl;
 
@@ -463,6 +464,7 @@ private:
     return rcl_interfaces::msg::SetParametersResult();
   }
 
+  // PRECONDITION: caller must hold params_cache_mutex_
   GPS_TRUST_NODE_LOCAL
   Json::Value json_from_params_cache_map()
   {
@@ -583,35 +585,29 @@ private:
       rxm_rawx_json_.reset();
     }
 
-    // count how many params need to be actioned
-    size_t pcm_len = 0;
-    // Iterate through the map
-    for (const auto & entry : params_cache_map_) {
-      const param_state_t & state = entry.second;   // Access the param_state_t struct
-
-      // Check if the notification status is either NOTI_NOT_ACTIONED or NOTI_NODE_UPDATE
-      if (state.noti == NOTI_NOT_ACTIONED || state.noti == NOTI_NODE_UPDATE) {
-        ++pcm_len;      // Increment the counter if the condition is satisfied
-      }
-    }
-
-    RCLCPP_DEBUG(
-      get_logger(), "params_cache_map_ to be actioned or have been updated len: %ld",
-      pcm_len);
-
-    if (pcm_len > 0) {
-      // Lock the mutex to ensure thread safety
+    {
+      // Lock mutex before iterating params_cache_map_ to prevent race with
+      // on_parameter_event_callback which modifies the map on a different thread
       std::lock_guard<std::mutex> lock(params_cache_mutex_);
 
-      json_request["nparams"] = json_from_params_cache_map();
-
-      for (auto & entry : params_cache_map_) {
-        auto & state = entry.second;
-        if (state.noti == NOTI_NOT_ACTIONED || state.noti == NOTI_NODE_UPDATE) {
-          state.noti = NOTI_GPS_TRUST;
+      bool has_actionable_params = false;
+      for (const auto & entry : params_cache_map_) {
+        if (entry.second.noti == NOTI_NOT_ACTIONED || entry.second.noti == NOTI_NODE_UPDATE) {
+          has_actionable_params = true;
+          break;
         }
       }
 
+      if (has_actionable_params) {
+        json_request["nparams"] = json_from_params_cache_map();
+
+        for (auto & entry : params_cache_map_) {
+          auto & state = entry.second;
+          if (state.noti == NOTI_NOT_ACTIONED || state.noti == NOTI_NODE_UPDATE) {
+            state.noti = NOTI_GPS_TRUST;
+          }
+        }
+      }
     }
 
     Json::StreamWriterBuilder builder;
@@ -698,21 +694,17 @@ private:
               value.c_str(),
               ptype);
 
-            if (!param_cache_helper_->check_param_in_cache(name, node_type)) {
+            auto param_optional = param_cache_helper_->check_update_and_get(
+              name, node_type, NOTI_NODE_UPDATE);
+            if (!param_optional) {
               RCLCPP_WARN(
                 get_logger(), "Action name: %s not in param_cache for %s .. doing nothing!",
                 name.c_str(),
                 param_type_to_string(node_type).c_str());
 
             } else {
-              param_cache_helper_->update_param_notification(name, node_type, NOTI_NODE_UPDATE);
-
-              auto param_optional = param_cache_helper_->get_param_from_cache(
-                name,
-                node_type);
-              if (param_optional) {
-                auto param = *param_optional;
-                std::vector<rclcpp::Parameter> parameters;
+              auto param = *param_optional;
+              std::vector<rclcpp::Parameter> parameters;
 
                 try {
                   switch (param.type) {
@@ -792,7 +784,6 @@ private:
                     e.what()
                   );
                 }
-              }
             }
           }
         }
