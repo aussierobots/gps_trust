@@ -157,6 +157,8 @@ public:
         &GPSTrustNode::on_parameter_event_callback,
         this, _1));
 
+    const int max_service_retries = 30;
+    int service_retries = 0;
     while (!ntrip_parameters_client_->wait_for_service(1s) ||
       !ublox_parameters_client_->wait_for_service(1s))
     {
@@ -165,7 +167,15 @@ public:
         rclcpp::shutdown();
         return;
       }
-      RCLCPP_WARN(this->get_logger(), "paramter client service not available, waiting again...");
+      if (++service_retries >= max_service_retries) {
+        RCLCPP_ERROR(
+          this->get_logger(),
+          "Parameter services not available after %d attempts, proceeding with available services",
+          max_service_retries);
+        break;
+      }
+      RCLCPP_WARN(this->get_logger(), "parameter client service not available, waiting again... (%d/%d)",
+        service_retries, max_service_retries);
     }
 
     initialise_ntrip_parameters();
@@ -244,6 +254,10 @@ private:
 
       RCLCPP_DEBUG(this->get_logger(), "%s", ss.str().c_str());
     }
+
+    if (parameters.empty()) {
+      RCLCPP_WARN(this->get_logger(), "No NTRIP parameters loaded from %s", ntrip_client_node_.c_str());
+    }
   }
 
   GPS_TRUST_NODE_LOCAL
@@ -305,6 +319,10 @@ private:
       }
 
       RCLCPP_DEBUG(this->get_logger(), "%s", ss.str().c_str());
+    }
+
+    if (parameters.empty()) {
+      RCLCPP_WARN(this->get_logger(), "No UBX parameters loaded from %s", ublox_dgnss_node_.c_str());
     }
   }
 
