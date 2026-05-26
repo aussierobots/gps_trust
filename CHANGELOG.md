@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD024 -->
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -9,6 +10,14 @@ Version bumps follow the project rule that A2A / MCP / schema contract changes
 require a minor bump. The GPS Trust API request body is a schema contract.
 
 ## [Unreleased]
+
+### Changed
+
+- `rxm_sfrbx` stall-warn threshold is now configurable via the
+  `sfrbx_warn_threshold` node parameter (default 100). The previous fixed
+  threshold of 20 misread steady-state operation as a stall when all 6
+  constellations are enabled with multi-frequency tracking at
+  `CFG_RATE_MEAS=2000` — typical batch sizes are ~30-50 records.
 
 ## [0.1.0] - 2026-05-26
 

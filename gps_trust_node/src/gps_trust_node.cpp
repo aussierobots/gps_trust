@@ -167,6 +167,12 @@ public:
     declare_parameter("maxage_conn", 30);
     maxage_conn_ = get_parameter("maxage_conn").as_int();
 
+    // Threshold above which the sfrbx accumulator is considered stalled (LLH
+    // drain hasn't fired). Default sized for F9P with all 6 constellations at
+    // CFG_RATE_MEAS=2000ms — ~4 typical LLH cycles of backlog.
+    declare_parameter("sfrbx_warn_threshold", 100);
+    sfrbx_warn_threshold_ = get_parameter("sfrbx_warn_threshold").as_int();
+
     declare_parameter("log_level", "INFO");
     log_level_ = get_parameter("log_level").as_string();
 
@@ -231,6 +237,7 @@ private:
 
   std::string log_level_;
   long maxage_conn_;
+  long sfrbx_warn_threshold_;
 
   GPS_TRUST_NODE_LOCAL
   void initialise_ntrip_parameters()
@@ -1497,13 +1504,15 @@ void ubx_rxm_sfrbx_callback(const ublox_ubx_msgs::msg::UBXRxmSfrbx::SharedPtr ms
 
   RCLCPP_DEBUG(get_logger(), "rxm_sfrbx accumulated count: %u", count);
 
-  // Shouldn't happen under normal operation — sfrbx arrives ~5-10/sec and LLH
-  // drains between epochs. Sustained >20 suggests LLH callback has stalled.
-  if (count > 20) {
+  // Sustained counts above the threshold suggest the llh callback has stalled.
+  // Default 100 is sized for F9P with all 6 constellations at 0.5 Hz LLH
+  // (steady state ~30-50/batch); tune via `sfrbx_warn_threshold` parameter
+  // for other receiver configs.
+  if (static_cast<long>(count) > sfrbx_warn_threshold_) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 1000,
-      "rxm_sfrbx accumulator size %u exceeds expected threshold (20) — LLH may have stalled",
-      count);
+      "rxm_sfrbx accumulator size %u exceeds threshold (%ld) — LLH may have stalled",
+      count, sfrbx_warn_threshold_);
   }
 }
 
