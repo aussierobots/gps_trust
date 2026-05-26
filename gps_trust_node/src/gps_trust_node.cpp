@@ -29,11 +29,16 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
 #include "std_msgs/msg/header.hpp"
+#include "ublox_ubx_msgs/msg/ubx_nav_clock.hpp"
+#include "ublox_ubx_msgs/msg/ubx_nav_eoe.hpp"
 #include "ublox_ubx_msgs/msg/ubx_nav_hp_pos_llh.hpp"
 #include "ublox_ubx_msgs/msg/ubx_nav_orb.hpp"
 #include "ublox_ubx_msgs/msg/ubx_nav_sat.hpp"
-#include "ublox_ubx_msgs/msg/ubx_sec_sig.hpp"
+#include "ublox_ubx_msgs/msg/ubx_nav_status.hpp"
+#include "ublox_ubx_msgs/msg/ubx_nav_time_utc.hpp"
 #include "ublox_ubx_msgs/msg/ubx_rxm_rawx.hpp"
+#include "ublox_ubx_msgs/msg/ubx_rxm_sfrbx.hpp"
+#include "ublox_ubx_msgs/msg/ubx_sec_sig.hpp"
 #include "rtcm_msgs/msg/message.hpp"
 #include "gps_trust_node/visibility_control.h"
 #include "gps_trust_node/node_params.hpp"
@@ -92,6 +97,31 @@ public:
       std::bind(&GPSTrustNode::ubx_rxm_rawx_callback, this, std::placeholders::_1),
       sub_options);
 
+    nav_clock_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXNavClock>(
+      "/ubx_nav_clock", qos,
+      std::bind(&GPSTrustNode::ubx_nav_clock_callback, this, std::placeholders::_1),
+      sub_options);
+
+    nav_eoe_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXNavEOE>(
+      "/ubx_nav_eoe", qos,
+      std::bind(&GPSTrustNode::ubx_nav_eoe_callback, this, std::placeholders::_1),
+      sub_options);
+
+    nav_timeutc_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXNavTimeUTC>(
+      "/ubx_nav_time_utc", qos,
+      std::bind(&GPSTrustNode::ubx_nav_timeutc_callback, this, std::placeholders::_1),
+      sub_options);
+
+    nav_status_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXNavStatus>(
+      "/ubx_nav_status", qos,
+      std::bind(&GPSTrustNode::ubx_nav_status_callback, this, std::placeholders::_1),
+      sub_options);
+
+    rxm_sfrbx_sub_ = this->create_subscription<ublox_ubx_msgs::msg::UBXRxmSfrbx>(
+      "/ubx_rxm_sfrbx", qos,
+      std::bind(&GPSTrustNode::ubx_rxm_sfrbx_callback, this, std::placeholders::_1),
+      sub_options);
+
     // Publisher
     pub_ =
       this->create_publisher<gps_trust_msgs::msg::GPSTrustIndicator>(
@@ -116,8 +146,8 @@ public:
     // Get GPS Trust Host URL
     declare_parameter(
       "GPS_TRUST_API_URL",
-      "http://mbp.local:9000/lambda-url/gps-trust-api"
-      // "https://gtapi.aussierobots.com.au/gps-trust-api"
+      // "http://mbp.local:9000/lambda-url/gps-trust-api"
+      "https://gtapi.aussierobots.com.au/gps-trust-api"
     );
 
     get_parameter("GPS_TRUST_API_URL", api_url_);
@@ -579,29 +609,41 @@ private:
 
     json_request["llh"] = json_from_ubx_nav_llh(msg);
 
-    RCLCPP_DEBUG(get_logger(), "sec_sig_json_.use_count(): %ld", sec_sig_json_.use_count());
-    if (sec_sig_json_.use_count() != 0) {
-      json_request["sec_sig"] = *sec_sig_json_.get();
-      sec_sig_json_.reset();
+    // Snapshot all payloads under a single brief lock. std::move leaves the
+    // members null, which is exactly the drain-and-reset semantic we want.
+    // Serialization into json_request happens outside the lock so subscriber
+    // callbacks can continue building the next batch.
+    std::shared_ptr<Json::Value> sec_sig_snap;
+    std::shared_ptr<Json::Value> nav_orb_snap;
+    std::shared_ptr<Json::Value> nav_sat_snap;
+    std::shared_ptr<Json::Value> rxm_rawx_snap;
+    std::shared_ptr<Json::Value> nav_clock_snap;
+    std::shared_ptr<Json::Value> nav_eoe_snap;
+    std::shared_ptr<Json::Value> nav_status_snap;
+    std::shared_ptr<Json::Value> nav_timeutc_snap;
+    std::shared_ptr<Json::Value> rxm_sfrbxes_snap;
+    {
+      std::lock_guard<std::mutex> lock(payloads_mutex_);
+      sec_sig_snap = std::move(sec_sig_json_);
+      nav_orb_snap = std::move(nav_orb_json_);
+      nav_sat_snap = std::move(nav_sat_json_);
+      rxm_rawx_snap = std::move(rxm_rawx_json_);
+      nav_clock_snap = std::move(nav_clock_json_);
+      nav_eoe_snap = std::move(nav_eoe_json_);
+      nav_status_snap = std::move(nav_status_json_);
+      nav_timeutc_snap = std::move(nav_timeutc_json_);
+      rxm_sfrbxes_snap = std::move(rxm_sfrbxes_json_);
     }
 
-    RCLCPP_DEBUG(get_logger(), "nav_orb_json_.use_count(): %ld", nav_orb_json_.use_count());
-    if (nav_orb_json_.use_count() != 0) {
-      json_request["nav_orb"] = *nav_orb_json_.get();
-      nav_orb_json_.reset();
-    }
-
-    RCLCPP_DEBUG(get_logger(), "nav_sat_json_.use_count(): %ld", nav_sat_json_.use_count());
-    if (nav_sat_json_.use_count() != 0) {
-      json_request["nav_sat"] = *nav_sat_json_.get();
-      nav_sat_json_.reset();
-    }
-
-    RCLCPP_DEBUG(get_logger(), "rxm_rawx_json_.use_count(): %ld", rxm_rawx_json_.use_count());
-    if (rxm_rawx_json_.use_count() != 0) {
-      json_request["rxm_rawx"] = *rxm_rawx_json_.get();
-      rxm_rawx_json_.reset();
-    }
+    if (sec_sig_snap) {json_request["sec_sig"] = *sec_sig_snap;}
+    if (nav_orb_snap) {json_request["nav_orb"] = *nav_orb_snap;}
+    if (nav_sat_snap) {json_request["nav_sat"] = *nav_sat_snap;}
+    if (rxm_rawx_snap) {json_request["rxm_rawx"] = *rxm_rawx_snap;}
+    if (nav_clock_snap) {json_request["nav_clock"] = *nav_clock_snap;}
+    if (nav_eoe_snap) {json_request["nav_eoe"] = *nav_eoe_snap;}
+    if (nav_status_snap) {json_request["nav_status"] = *nav_status_snap;}
+    if (nav_timeutc_snap) {json_request["nav_timeutc"] = *nav_timeutc_snap;}
+    if (rxm_sfrbxes_snap) {json_request["rxm_sfrbxes"] = *rxm_sfrbxes_snap;}
 
     {
       // Lock mutex before iterating params_cache_map_ to prevent race with
@@ -879,9 +921,12 @@ Json::Value json_from_ubx_sec_sec(const ublox_ubx_msgs::msg::UBXSecSig::SharedPt
 GPS_TRUST_NODE_LOCAL
 void ubx_sec_sig_callback(const ublox_ubx_msgs::msg::UBXSecSig::SharedPtr msg)
 {
-  sec_sig_json_ = std::make_shared<Json::Value>(json_from_ubx_sec_sec(msg));
-
-  RCLCPP_DEBUG(get_logger(), "sec_sig_json: %s", sec_sig_json_->toStyledString().c_str());
+  auto val = std::make_shared<Json::Value>(json_from_ubx_sec_sec(msg));
+  RCLCPP_DEBUG(get_logger(), "sec_sig_json: %s", val->toStyledString().c_str());
+  {
+    std::lock_guard<std::mutex> lock(payloads_mutex_);
+    sec_sig_json_ = std::move(val);
+  }
 }
 
 GPS_TRUST_NODE_LOCAL
@@ -955,9 +1000,8 @@ std::string flatten_json_array(std::string name, Json::Value array)
 GPS_TRUST_NODE_LOCAL
 void ubx_nav_orb_callback(const ublox_ubx_msgs::msg::UBXNavOrb::SharedPtr msg)
 {
-  nav_orb_json_ = std::make_shared<Json::Value>(json_from_ubx_nav_orb(msg));
-
-  auto json = *nav_orb_json_.get();
+  auto val = std::make_shared<Json::Value>(json_from_ubx_nav_orb(msg));
+  auto json = *val;
 
   using std::endl;
 
@@ -983,6 +1027,11 @@ void ubx_nav_orb_callback(const ublox_ubx_msgs::msg::UBXNavOrb::SharedPtr msg)
   oss << "}" << endl;
 
   RCLCPP_DEBUG(get_logger(), "nav_orb_json: %s", oss.str().c_str());
+
+  {
+    std::lock_guard<std::mutex> lock(payloads_mutex_);
+    nav_orb_json_ = std::move(val);
+  }
 }
 
 GPS_TRUST_NODE_LOCAL
@@ -1083,9 +1132,8 @@ Json::Value json_from_ubx_nav_sat(const ublox_ubx_msgs::msg::UBXNavSat::SharedPt
 GPS_TRUST_NODE_LOCAL
 void ubx_nav_sat_callback(const ublox_ubx_msgs::msg::UBXNavSat::SharedPtr msg)
 {
-  nav_sat_json_ = std::make_shared<Json::Value>(json_from_ubx_nav_sat(msg));
-
-  auto json = *nav_sat_json_.get();
+  auto val = std::make_shared<Json::Value>(json_from_ubx_nav_sat(msg));
+  auto json = *val;
 
   using std::endl;
 
@@ -1125,6 +1173,11 @@ void ubx_nav_sat_callback(const ublox_ubx_msgs::msg::UBXNavSat::SharedPtr msg)
   oss << "}" << endl;
 
   RCLCPP_DEBUG(get_logger(), "nav_sat_json: %s", oss.str().c_str());
+
+  {
+    std::lock_guard<std::mutex> lock(payloads_mutex_);
+    nav_sat_json_ = std::move(val);
+  }
 }
 
 GPS_TRUST_NODE_LOCAL
@@ -1211,9 +1264,8 @@ Json::Value json_from_ubx_rxm_rawx(const ublox_ubx_msgs::msg::UBXRxmRawx::Shared
 GPS_TRUST_NODE_LOCAL
 void ubx_rxm_rawx_callback(const ublox_ubx_msgs::msg::UBXRxmRawx::SharedPtr msg)
 {
-  rxm_rawx_json_ = std::make_shared<Json::Value>(json_from_ubx_rxm_rawx(msg));
-
-  auto json = *rxm_rawx_json_.get();
+  auto val = std::make_shared<Json::Value>(json_from_ubx_rxm_rawx(msg));
+  auto json = *val;
 
   using std::endl;
 
@@ -1249,6 +1301,210 @@ void ubx_rxm_rawx_callback(const ublox_ubx_msgs::msg::UBXRxmRawx::SharedPtr msg)
   oss << "}" << endl;
 
   RCLCPP_DEBUG(get_logger(), "rxm_rawx_json: %s", oss.str().c_str());
+
+  {
+    std::lock_guard<std::mutex> lock(payloads_mutex_);
+    rxm_rawx_json_ = std::move(val);
+  }
+}
+
+GPS_TRUST_NODE_LOCAL
+Json::Value json_from_ubx_nav_clock(const ublox_ubx_msgs::msg::UBXNavClock::SharedPtr msg)
+{
+  Json::Value json_stamp;
+  json_stamp["sec"] = msg->header.stamp.sec;
+  json_stamp["nanosec"] = msg->header.stamp.nanosec;
+
+  Json::Value nc;
+  nc["timestamp"] = json_stamp;
+  nc["frame_id"] = msg->header.frame_id;
+
+  nc["itow"] = msg->itow;
+  nc["clk_b"] = msg->clk_b;
+  nc["clk_d"] = msg->clk_d;
+  nc["t_acc"] = msg->t_acc;
+  nc["f_acc"] = msg->f_acc;
+
+  return nc;
+}
+
+GPS_TRUST_NODE_LOCAL
+void ubx_nav_clock_callback(const ublox_ubx_msgs::msg::UBXNavClock::SharedPtr msg)
+{
+  auto val = std::make_shared<Json::Value>(json_from_ubx_nav_clock(msg));
+  RCLCPP_DEBUG(get_logger(), "nav_clock_json: %s", val->toStyledString().c_str());
+  {
+    std::lock_guard<std::mutex> lock(payloads_mutex_);
+    nav_clock_json_ = std::move(val);
+  }
+}
+
+GPS_TRUST_NODE_LOCAL
+Json::Value json_from_ubx_nav_eoe(const ublox_ubx_msgs::msg::UBXNavEOE::SharedPtr msg)
+{
+  Json::Value json_stamp;
+  json_stamp["sec"] = msg->header.stamp.sec;
+  json_stamp["nanosec"] = msg->header.stamp.nanosec;
+
+  Json::Value ne;
+  ne["timestamp"] = json_stamp;
+  ne["frame_id"] = msg->header.frame_id;
+  ne["itow"] = msg->itow;
+
+  return ne;
+}
+
+GPS_TRUST_NODE_LOCAL
+void ubx_nav_eoe_callback(const ublox_ubx_msgs::msg::UBXNavEOE::SharedPtr msg)
+{
+  auto val = std::make_shared<Json::Value>(json_from_ubx_nav_eoe(msg));
+  RCLCPP_DEBUG(get_logger(), "nav_eoe_json: %s", val->toStyledString().c_str());
+  {
+    std::lock_guard<std::mutex> lock(payloads_mutex_);
+    nav_eoe_json_ = std::move(val);
+  }
+}
+
+GPS_TRUST_NODE_LOCAL
+Json::Value json_from_ubx_nav_timeutc(const ublox_ubx_msgs::msg::UBXNavTimeUTC::SharedPtr msg)
+{
+  Json::Value json_stamp;
+  json_stamp["sec"] = msg->header.stamp.sec;
+  json_stamp["nanosec"] = msg->header.stamp.nanosec;
+
+  Json::Value nt;
+  nt["timestamp"] = json_stamp;
+  nt["frame_id"] = msg->header.frame_id;
+
+  nt["itow"] = msg->itow;
+  nt["t_acc"] = msg->t_acc;
+  nt["nano"] = msg->nano;
+  nt["year"] = msg->year;
+  nt["month"] = msg->month;
+  nt["day"] = msg->day;
+  nt["hour"] = msg->hour;
+  nt["min"] = msg->min;
+  nt["sec"] = msg->sec;
+  nt["valid_tow"] = msg->valid_tow;
+  nt["valid_wkn"] = msg->valid_wkn;
+  nt["valid_utc"] = msg->valid_utc;
+  nt["utc_std"] = msg->utc_std.id;
+
+  return nt;
+}
+
+GPS_TRUST_NODE_LOCAL
+void ubx_nav_timeutc_callback(const ublox_ubx_msgs::msg::UBXNavTimeUTC::SharedPtr msg)
+{
+  auto val = std::make_shared<Json::Value>(json_from_ubx_nav_timeutc(msg));
+  RCLCPP_DEBUG(get_logger(), "nav_timeutc_json: %s", val->toStyledString().c_str());
+  {
+    std::lock_guard<std::mutex> lock(payloads_mutex_);
+    nav_timeutc_json_ = std::move(val);
+  }
+}
+
+GPS_TRUST_NODE_LOCAL
+Json::Value json_from_ubx_nav_status(const ublox_ubx_msgs::msg::UBXNavStatus::SharedPtr msg)
+{
+  Json::Value json_stamp;
+  json_stamp["sec"] = msg->header.stamp.sec;
+  json_stamp["nanosec"] = msg->header.stamp.nanosec;
+
+  Json::Value ns;
+  ns["timestamp"] = json_stamp;
+  ns["frame_id"] = msg->header.frame_id;
+
+  ns["itow"] = msg->itow;
+  ns["gps_fix"] = msg->gps_fix.fix_type;
+
+  ns["gps_fix_ok"] = msg->gps_fix_ok;
+  ns["diff_soln"] = msg->diff_soln;
+  ns["wkn_set"] = msg->wkn_set;
+  ns["tow_set"] = msg->tow_set;
+
+  ns["diff_corr"] = msg->diff_corr;
+  ns["carr_soln_valid"] = msg->carr_soln_valid;
+
+  ns["map_matching"] = msg->map_matching.status;
+  ns["psm"] = msg->psm.state;
+  ns["spoof_det"] = msg->spoof_det.state;
+  ns["carr_soln"] = msg->carr_soln.status;
+
+  ns["ttff"] = msg->ttff;
+  ns["msss"] = msg->msss;
+
+  return ns;
+}
+
+GPS_TRUST_NODE_LOCAL
+void ubx_nav_status_callback(const ublox_ubx_msgs::msg::UBXNavStatus::SharedPtr msg)
+{
+  auto val = std::make_shared<Json::Value>(json_from_ubx_nav_status(msg));
+  RCLCPP_DEBUG(get_logger(), "nav_status_json: %s", val->toStyledString().c_str());
+  {
+    std::lock_guard<std::mutex> lock(payloads_mutex_);
+    nav_status_json_ = std::move(val);
+  }
+}
+
+GPS_TRUST_NODE_LOCAL
+Json::Value json_from_ubx_rxm_sfrbx(const ublox_ubx_msgs::msg::UBXRxmSfrbx::SharedPtr msg)
+{
+  Json::Value json_stamp;
+  json_stamp["sec"] = msg->header.stamp.sec;
+  json_stamp["nanosec"] = msg->header.stamp.nanosec;
+
+  Json::Value rs;
+  rs["timestamp"] = json_stamp;
+  rs["frame_id"] = msg->header.frame_id;
+
+  rs["gnss_id"] = msg->gnss_id;
+  rs["sv_id"] = msg->sv_id;
+  rs["sig_id"] = msg->sig_id;
+  rs["freq_id"] = msg->freq_id;
+  rs["num_words"] = msg->num_words;
+  rs["chn"] = msg->chn;
+  rs["version"] = msg->version;
+
+  Json::Value dwrd;
+  for (const auto & w : msg->dwrd) {
+    dwrd.append(static_cast<Json::UInt>(w));
+  }
+  rs["dwrd"] = dwrd;
+
+  return rs;
+}
+
+GPS_TRUST_NODE_LOCAL
+void ubx_rxm_sfrbx_callback(const ublox_ubx_msgs::msg::UBXRxmSfrbx::SharedPtr msg)
+{
+  // Build outside the lock — JSON conversion doesn't touch shared state.
+  auto record = json_from_ubx_rxm_sfrbx(msg);
+  RCLCPP_DEBUG(get_logger(), "rxm_sfrbx_json: %s", record.toStyledString().c_str());
+
+  Json::ArrayIndex count;
+  {
+    std::lock_guard<std::mutex> lock(payloads_mutex_);
+    // Accumulate subframe records between llh epochs — each callback appends one
+    // record to the array. ubx_nav_llh_callback attaches and resets the batch.
+    if (rxm_sfrbxes_json_.use_count() == 0) {
+      rxm_sfrbxes_json_ = std::make_shared<Json::Value>(Json::arrayValue);
+    }
+    rxm_sfrbxes_json_->append(std::move(record));
+    count = rxm_sfrbxes_json_->size();
+  }
+
+  RCLCPP_DEBUG(get_logger(), "rxm_sfrbx accumulated count: %u", count);
+
+  // Shouldn't happen under normal operation — sfrbx arrives ~5-10/sec and LLH
+  // drains between epochs. Sustained >20 suggests LLH callback has stalled.
+  if (count > 20) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 1000,
+      "rxm_sfrbx accumulator size %u exceeds expected threshold (20) — LLH may have stalled",
+      count);
+  }
 }
 
 GPS_TRUST_NODE_LOCAL
@@ -1448,9 +1704,14 @@ static size_t writeCallback(void * contents, size_t size, size_t nmemb, void * u
 
 rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavHPPosLLH>::SharedPtr nav_llh_sub_;
 rclcpp::Subscription<ublox_ubx_msgs::msg::UBXSecSig>::SharedPtr sec_sig_sub_;
+rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavClock>::SharedPtr nav_clock_sub_;
+rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavEOE>::SharedPtr nav_eoe_sub_;
 rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavOrb>::SharedPtr nav_orb_sub_;
 rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavSat>::SharedPtr nav_sat_sub_;
+rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavStatus>::SharedPtr nav_status_sub_;
+rclcpp::Subscription<ublox_ubx_msgs::msg::UBXNavTimeUTC>::SharedPtr nav_timeutc_sub_;
 rclcpp::Subscription<ublox_ubx_msgs::msg::UBXRxmRawx>::SharedPtr rxm_rawx_sub_;
+rclcpp::Subscription<ublox_ubx_msgs::msg::UBXRxmSfrbx>::SharedPtr rxm_sfrbx_sub_;
 
 rclcpp::Publisher<gps_trust_msgs::msg::GPSTrustIndicator>::SharedPtr pub_;
 
@@ -1458,10 +1719,20 @@ std::string api_key_;
 std::string api_url_;
 std::string device_id_;
 
+// All *_json_ payloads below are guarded by payloads_mutex_ — UBX subscriber
+// callbacks publish into them on subscription threads while the llh callback
+// drains them. Critical sections hold only for pointer swap or single
+// append-to-array, never around JSON construction or serialization.
 std::shared_ptr<Json::Value> sec_sig_json_;
+std::shared_ptr<Json::Value> nav_clock_json_;
+std::shared_ptr<Json::Value> nav_eoe_json_;
 std::shared_ptr<Json::Value> nav_orb_json_;
 std::shared_ptr<Json::Value> nav_sat_json_;
+std::shared_ptr<Json::Value> nav_status_json_;
+std::shared_ptr<Json::Value> nav_timeutc_json_;
 std::shared_ptr<Json::Value> rxm_rawx_json_;
+std::shared_ptr<Json::Value> rxm_sfrbxes_json_;  // accumulates sfrbx records
+std::mutex payloads_mutex_;
 
 public:
 GPS_TRUST_NODE_LOCAL
