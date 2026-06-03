@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.10)
 project(gps_trust_node)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -21,7 +21,7 @@ find_package(jsoncpp REQUIRED)
 # link_libraries(${JSONCPP_LIBRARIES})
 # include_directories(${JSONCPP_INCLUDE_DIRS})
 
-find_package(libcurl_vendor REQUIRED)
+find_package(CURL REQUIRED)
 
 pkg_check_modules(ZLIB zlib)
 find_package(ZLIB REQUIRED)
