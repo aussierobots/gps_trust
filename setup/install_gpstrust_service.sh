@@ -45,7 +45,7 @@ prompt_secret() {
             echo "Value is required." >&2
         fi
     done
-    echo "$var"
+    printf '%s\n' "$var"
 }
 
 # --- Sanity checks ---------------------------------------------------------
