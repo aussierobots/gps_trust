@@ -29,7 +29,7 @@ prompt_required() {
     while [ -z "$var" ]; do
         read -r -p "$prompt: " var
         if [ -z "$var" ]; then
-            echo "Value is required."
+            echo "Value is required." >&2
         fi
     done
     echo "$var"
