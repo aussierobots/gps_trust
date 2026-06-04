@@ -40,9 +40,9 @@ prompt_secret() {
     local var=""
     while [ -z "$var" ]; do
         read -r -s -p "$prompt: " var
-        echo
+        echo >&2
         if [ -z "$var" ]; then
-            echo "Value is required."
+            echo "Value is required." >&2
         fi
     done
     echo "$var"
