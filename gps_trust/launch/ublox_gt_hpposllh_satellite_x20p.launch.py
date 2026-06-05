@@ -36,6 +36,7 @@ def generate_launch_description():
         'CFG_MSGOUT_UBX_RXM_RAWX_USB': '1',
         'CFG_MSGOUT_UBX_RXM_SFRBX_USB': '1',
         'CFG_SIGNAL_BDS_ENA': 'true',
+        'CFG_BDS_USE_GEO_PRN': 'true',
         'CFG_SIGNAL_GLO_ENA': 'true',
         'CFG_SIGNAL_GAL_ENA': 'true',
         'CFG_SIGNAL_GPS_ENA': 'true',
