@@ -436,22 +436,6 @@ echo "Cron job installed at $CRON_FILE"
 echo
 echo "Installing logrotate config for gpstrust logs..."
 
-LOGROTATE_FILE="/etc/logrotate.d/gpstrust"
-
-cat > "$LOGROTATE_FILE" <<EOF
-$LOG_DIR/*.log {
-    daily
-    rotate $LOG_RETENTION_DAYS
-    compress
-    delaycompress
-    missingok
-    notifempty
-    copytruncate
-}
-EOF
-
-chmod 644 "$LOGROTATE_FILE"
-echo "Logrotate config installed at $LOGROTATE_FILE"
 
 # --- Write systemd service --------------------------------------------------
 
