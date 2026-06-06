@@ -294,7 +294,7 @@ fi
 if [ -n "${NTRIP_PASSWORD-}" ]; then
     echo "NTRIP password (NTRIP_PASSWORD): [press Enter to reuse existing value]"
     read -r -s NTRIP_PASSWORD_INPUT
-    echo
+    echo >$2
     if [ -n "$NTRIP_PASSWORD_INPUT" ]; then
         NTRIP_PASSWORD="$NTRIP_PASSWORD_INPUT"
     fi
@@ -441,7 +441,7 @@ LOGROTATE_FILE="/etc/logrotate.d/gpstrust"
 cat > "$LOGROTATE_FILE" <<EOF
 $LOG_DIR/*.log {
     daily
-    rotate 14
+    rotate $LOG_RETENTION_DAYS
     compress
     delaycompress
     missingok
