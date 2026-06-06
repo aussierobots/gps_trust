@@ -363,6 +363,7 @@ USE_HTTPS="$USE_HTTPS"
 LOG_DIR="$LOG_DIR"
 PID_DIR="$PID_DIR"
 LOG_RETENTION_DAYS="$LOG_RETENTION_DAYS"
+SERVICE_USER="$SERVICE_USER"
 EOF
 
 chown root:"$SERVICE_USER" "$ENV_FILE"
@@ -402,8 +403,18 @@ fi
 
 LOG_DIR="${LOG_DIR:-/var/log/gpstrust}"
 LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-7}"
+SERVICE_USER="${SERVICE_USER:-gpstrust}"
+SERVICE_HOME="$(getent passwd "$SERVICE_USER" | cut -d: -f6)"
 
-find "$LOG_DIR" -maxdepth 1 -type f -name "*.log" -mtime +"$LOG_RETENTION_DAYS" -delete
+# Clean old GPS Trust logs
+if [ -d "$LOG_DIR" ]; then
+  find "$LOG_DIR" -maxdepth 1 -type f -name "*.log" -mtime +"$LOG_RETENTION_DAYS" -delete
+fi
+
+# Clean old ROS logs for the configured service user
+if [ -n "$SERVICE_HOME" ] && [ -d "$SERVICE_HOME/.ros/log" ]; then
+  find "$SERVICE_HOME/.ros/log" -mindepth 1 -mtime +"$LOG_RETENTION_DAYS" -exec rm -rf {} +
+fi
 EOF
 
 chmod 755 "$CLEANUP_SCRIPT"
@@ -421,6 +432,26 @@ EOF
 
 chmod 755 "$CRON_FILE"
 echo "Cron job installed at $CRON_FILE"
+
+echo
+echo "Installing logrotate config for gpstrust logs..."
+
+LOGROTATE_FILE="/etc/logrotate.d/gpstrust"
+
+cat > "$LOGROTATE_FILE" <<EOF
+$LOG_DIR/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+EOF
+
+chmod 644 "$LOGROTATE_FILE"
+echo "Logrotate config installed at $LOGROTATE_FILE"
 
 # --- Write systemd service --------------------------------------------------
 
