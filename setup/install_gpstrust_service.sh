@@ -294,7 +294,7 @@ fi
 if [ -n "${NTRIP_PASSWORD-}" ]; then
     echo "NTRIP password (NTRIP_PASSWORD): [press Enter to reuse existing value]"
     read -r -s NTRIP_PASSWORD_INPUT
-    echo >$2
+    echo >&2
     if [ -n "$NTRIP_PASSWORD_INPUT" ]; then
         NTRIP_PASSWORD="$NTRIP_PASSWORD_INPUT"
     fi
