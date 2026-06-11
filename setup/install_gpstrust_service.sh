@@ -55,6 +55,16 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Ubuntu 26.04 - sudo -E no longer avaliable. So source the saved environment
+ENV_FILE="/etc/gpstrust.env"
+
+if [ -r "$ENV_FILE" ]; then
+    echo "Loading existing configuration from $ENV_FILE"
+    # shellcheck disable=SC1091
+    . "$ENV_FILE"
+    echo
+fi
+
 # Determine repo root (directory above this script)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -332,7 +342,6 @@ ROS_DOMAIN_ID="$(prompt_default 'ROS domain ID (ROS_DOMAIN_ID)' "$ROS_DOMAIN_ID_
 
 # --- Write /etc/gpstrust.env ----------------------------------------------
 
-ENV_FILE="/etc/gpstrust.env"
 echo
 echo "Writing environment file to $ENV_FILE..."
 
