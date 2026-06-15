@@ -88,6 +88,9 @@ case "${GPS_TRUST_DEVICE_TYPE^^}" in
     X20P)
         SAT_LAUNCH_FILE="ublox_gt_hpposllh_satellite_x20p.launch.py"
         ;;
+    F9R)
+        SAT_LAUNCH_FILE="ublox_gt_hpposllh_satellite_f9r.launch.py"
+        ;;
     F9P|"")
         SAT_LAUNCH_FILE="ublox_gt_hpposllh_satellite.launch.py"
         ;;
