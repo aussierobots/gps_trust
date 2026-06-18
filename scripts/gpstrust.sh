@@ -258,7 +258,14 @@ stop_gps() {
     echo -e "\n${BLUE}Cleaning up orphaned processes...${NC}"
     pkill -f "ros2 launch ublox_dgnss" 2>/dev/null || true
     pkill -f "ros2 launch gps_trust" 2>/dev/null || true
-    killall -q component_container component_container_mt 2>/dev/null || true
+    # NOTE: killall matches the kernel comm name, which the kernel truncates to
+    # 15 chars, so "component_container" (19) and "component_container_mt" (22)
+    # never match and the container processes — which actually hold the USB
+    # device — were left running, orphaning a whole stack on every restart.
+    # pkill -f matches the full command line and reaps them reliably.
+    pkill -TERM -f component_container 2>/dev/null || true
+    sleep 2
+    pkill -KILL -f component_container 2>/dev/null || true
 
     echo -e "\n${GREEN}GPS Trust System stopped${NC}"
 }

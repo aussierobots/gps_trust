@@ -501,13 +501,17 @@ else
     echo "Service not enabled."
 fi
 
-read -r -p "Start gpstrust.service now? [Y/n]: " START_CHOICE
+read -r -p "(Re)start gpstrust.service now? [Y/n]: " START_CHOICE
 if [[ ! "$START_CHOICE" =~ ^[Nn]$ ]]; then
-    systemctl start gpstrust.service
+    # Use restart, not start. The unit is Type=oneshot + RemainAfterExit=yes,
+    # so on an already-active service `start` is a silent no-op and a freshly
+    # built/pulled workspace would never actually be loaded. restart re-runs
+    # ExecStart (and starts the service cleanly if it was stopped).
+    systemctl restart gpstrust.service
     systemctl status gpstrust.service --no-pager || true
 else
-    echo "Service not started. You can start it later with:"
-    echo "  sudo systemctl start gpstrust.service"
+    echo "Service not (re)started. You can apply the update later with:"
+    echo "  sudo systemctl restart gpstrust.service"
 fi
 
 echo
