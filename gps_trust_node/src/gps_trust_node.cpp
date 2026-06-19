@@ -598,6 +598,7 @@ private:
     Json::Value llh;
     llh["timestamp"] = json_stamp;
     llh["frame_id"] = msg->header.frame_id;
+    llh["itow"] = msg->itow;
     llh["lon"] = lon;
     llh["lat"] = lat;
     llh["height"] = height;
@@ -1205,7 +1206,7 @@ Json::Value json_from_ubx_rxm_rawx(const ublox_ubx_msgs::msg::UBXRxmRawx::Shared
 
   Json::Value rec_stat;
   rec_stat["leap_sec"] = msg->rec_stat.leap_sec;
-  rec_stat["clk_rest"] = msg->rec_stat.clk_reset;
+  rec_stat["clk_reset"] = msg->rec_stat.clk_reset;
   rr["rec_stat"] = rec_stat;
 
   rr["version"] = msg->version;
