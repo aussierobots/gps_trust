@@ -3,7 +3,7 @@ ROS2 nodes for checking the trust level of GPS messages
 
 # GPS Trust – Automated ROS 2 GNSS Stack Setup
 
-This repository provides a full automation pipeline for setting up a GPS-Trust station on Ubuntu 24.04 or Raspberry Pi 5.
+This repository provides a full automation pipeline for setting up a GPS-Trust station on Ubuntu 26.04 or Raspberry Pi 5.
 
 It configures:
 - a dedicated `gpstrust` system user  
@@ -27,12 +27,12 @@ Each component runs under the `gpstrust` service account and writes to `/var/log
 ## 🚀 Quick Install
 
 Follow ROS2 install docs
-[ROS2 Installation Guide](https://docs.ros.org/en/rolling/Installation/Ubuntu-Install-Debians.html)
+[ROS2 Installation Guide](https://docs.ros.org/en/lyrical/Installation/Ubuntu-Install-Debians.html)
 
 ```bash
-sudo apt install git python3-colcon-common-extensions python3-rosdep ros2-rolling-ros-base
+sudo apt install git python3-colcon-common-extensions python3-rosdep ros2-lyrical-ros-base ros2-lyrical-rtcm-msgs 
 git clone https://github.com/aussierobots/gps_trust.git && cd gps_trust
-sudo -E ./setup/install_gpstrust_service.sh
+sudo ./setup/install_gpstrust_service.sh
 ```
 
 During setup you will be prompted for:
