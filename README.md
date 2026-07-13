@@ -36,7 +36,7 @@ sudo ./setup/install_gpstrust_service.sh
 ```
 
 During setup you will be prompted for:
-- ROS install prefix (default /opt/ros/rolling)
+- ROS install prefix (default /opt/ros/lyrical)
 - Device type (F9P or X20P)
 - NTRIP credentials and mountpoint
 - API key for GPS-Trust device telemetry
