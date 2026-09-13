@@ -48,6 +48,29 @@ The script:
 - writes /etc/gpstrust.env with all required variables
 - installs and enables the gpstrust.service
 
+## Updating log cleanup on an existing station
+
+Run `sudo ./setup/install_gpstrust_service.sh` from the checkout containing the
+fix to replace `/usr/local/sbin/gpstrust-log-cleanup.sh`, and accept the final
+service restart prompt. A rebuild or reboot alone does not update the installed
+cleanup script. If you defer the restart, run `sudo systemctl restart gpstrust.service`.
+
+ROS cleanup removes expired, closed files and deliberately retains directories:
+their age does not indicate whether a ROS launch still needs them. Open files
+are preserved using `fuser` (provided by `psmisc`); without it, ROS cleanup is
+skipped with a warning. Empty run directories remain and can be removed manually
+while the stack is stopped.
+
+After restarting, verify RTCM messages are arriving and the receiver is applying
+corrections. The current oneshot service can report active after a child fails,
+so `systemctl status` alone is not a recovery check.
+
+Run the cleanup regression tests without installing or restarting the stack:
+
+```bash
+python3 -m unittest discover -s tests -p 'test_log_cleanup.py' -v
+```
+
 Note:
 
 If you the environment variables already set, it should default to them
