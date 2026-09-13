@@ -420,9 +420,29 @@ if [ -d "$LOG_DIR" ]; then
   find "$LOG_DIR" -maxdepth 1 -type f -name "*.log" -mtime +"$LOG_RETENTION_DAYS" -delete
 fi
 
-# Clean old ROS logs for the configured service user
+# Appending to a log does not refresh its parent directory's mtime. Never
+# remove ROS log directories: even an empty one may belong to a live launch
+# whose logger will open a file later. Keep open files, including quiet logs.
 if [ -n "$SERVICE_HOME" ] && [ -d "$SERVICE_HOME/.ros/log" ]; then
-  find "$SERVICE_HOME/.ros/log" -mindepth 1 -mtime +"$LOG_RETENTION_DAYS" -exec rm -rf {} +
+  if ! command -v fuser >/dev/null 2>&1; then
+    echo "Skipping ROS log cleanup: install psmisc for fuser." >&2
+    exit 0
+  fi
+  find "$SERVICE_HOME/.ros/log" -type f -mtime +"$LOG_RETENTION_DAYS" \
+    -exec bash -c '
+      for log_file do
+        if fuser -s "$log_file"; then
+          continue
+        else
+          status=$?
+        fi
+        if [ "$status" -eq 1 ]; then
+          rm -f -- "$log_file" || exit 1
+        else
+          echo "Skipping ROS log file: fuser failed for $log_file" >&2
+        fi
+      done
+    ' _ {} +
 fi
 EOF
 
