@@ -31,6 +31,12 @@ def generate_launch_description():
         # NAK'd key makes the device reject the whole batch — leaving every UBX
         # message disabled (only persisted NAV-PVT/HPPOSLLH would flow). Dropping
         # this one F9P-only key lets the batch ACK and the full message set enable.
+
+        # RTCM3 input on USB, RTK fixed mode. Both valid on F9R (HPS 1.40).
+        # The boot-time CFG-VALGET poll is NAK'd in batches, leaving these
+        # unconfirmed on the device, so set them explicitly.
+        'CFG_USBINPROT_RTCM3X': 'true',
+        'CFG_NAVHPG_DGNSSMODE': '3',
         'CFG_RATE_MEAS': '2000',
         'CFG_RATE_NAV': '1',
         'CFG_SEC_SPOOFDET_SIM_SIG_DIS': 'false',
